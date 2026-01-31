@@ -1,5 +1,9 @@
-# Binaries (at root level only)
+# Binaries
 /calbar
+/calsync
+
+# Personal config (use configs/config.example.yaml as template)
+config.yaml
 
 # IDE
 .idea/
@@ -16,7 +20,3 @@ coverage.out
 # Nix
 result
 result-*
-
-# Personal config
-config.yaml
-/calsync
