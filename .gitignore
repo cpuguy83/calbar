@@ -1,0 +1,22 @@
+# Binaries (at root level only)
+/calbar
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Test output
+coverage.out
+
+# OS files
+.DS_Store
+
+# Nix
+result
+result-*
+
+# Personal config
+config.yaml
+/calsync

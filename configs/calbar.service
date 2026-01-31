@@ -1,0 +1,14 @@
+[Unit]
+Description=CalBar System Tray Calendar App
+Documentation=https://github.com/cpuguy83/calbar
+After=graphical-session.target
+Wants=calsync.service
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/calbar
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target

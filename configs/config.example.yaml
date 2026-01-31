@@ -1,0 +1,138 @@
+# =============================================================================
+# CalBar Configuration
+# =============================================================================
+# Location: ~/.config/calbar/config.yaml
+
+# -----------------------------------------------------------------------------
+# Sync Daemon Settings (calsync)
+# -----------------------------------------------------------------------------
+sync:
+  # How often to refresh calendar feeds
+  interval: 5m
+  
+  # Output file path (standard ICS format)
+  # This file is read by calbar and can be used by any ICS-compatible app
+  output: ~/.local/share/calbar/calendar.ics
+
+# -----------------------------------------------------------------------------
+# Calendar Sources
+# -----------------------------------------------------------------------------
+sources:
+  # ICS URL feed (simplest method)
+  - name: "Work Calendar"
+    type: ics
+    url: "https://outlook.office365.com/owa/calendar/abc123/calendar.ics"
+  
+  # ICS with basic auth
+  # - name: "Private Feed"
+  #   type: ics
+  #   url: "https://example.com/private/calendar.ics"
+  #   username: "myuser"
+  #   password_cmd: "pass show calendar/example"
+  
+  # CalDAV server (Nextcloud, Radicale, etc.)
+  # - name: "Personal"
+  #   type: caldav
+  #   url: "https://caldav.example.com/calendars/user/default/"
+  #   username: "myuser"
+  #   password_cmd: "pass show caldav/myserver"
+  
+  # Microsoft 365 with OAuth
+  # On first run, will prompt for device code authentication
+  # Tokens are stored in system keyring
+  # - name: "Work (MS365)"
+  #   type: ms365
+  #   # Optional: specify which calendars to sync (default: primary)
+  #   # calendars:
+  #   #   - "Calendar"
+  #   #   - "Work"
+  
+  # Apple iCloud Calendar (uses CalDAV)
+  # Requires an app-specific password from https://appleid.apple.com
+  # - name: "iCloud"
+  #   type: icloud
+  #   username: "your@icloud.com"  # Your Apple ID email
+  #   password_cmd: "pass show apple/app-specific-password"
+  #   # Optional: specify which calendars (default: all)
+  #   # calendars:
+  #   #   - "Home"
+  #   #   - "Work"
+
+# -----------------------------------------------------------------------------
+# include Filters
+# -----------------------------------------------------------------------------
+# Only events matching these rules will be synced.
+# If no filters are defined, ALL events are synced.
+#
+# Match types (use exactly one per rule):
+#   contains: Substring match (default)
+#   exact:    Exact string match
+#   prefix:   Starts with
+#   suffix:   Ends with
+#   regex:    Regular expression
+
+filters:
+  # Logic mode:
+  #   "or"  - Include event if it matches ANY rule (default)
+  #   "and" - Include event only if it matches ALL rules
+  mode: or
+  
+  rules:
+    # Substring match (contains)
+    - field: title
+      contains: "containerd contributors meeting"
+      case_insensitive: true
+    
+    # Exact match
+    # - field: title
+    #   exact: "Weekly Team Standup"
+    #   case_insensitive: true
+    
+    # Prefix match (starts with)
+    # - field: title
+    #   prefix: "[Important]"
+    
+    # Suffix match (ends with)
+    # - field: title
+    #   suffix: "Review"
+    
+    # Match by organizer email
+    # - field: organizer
+    #   contains: "boss@company.com"
+    
+    # Match by calendar/source name
+    # - field: source
+    #   exact: "Work Calendar"
+    
+    # Regex match
+    # - field: title
+    #   regex: "^(Team|Project)\\s+Meeting"
+    #   case_insensitive: true
+    
+    # Legacy format (still supported, treated as 'contains')
+    # - field: title
+    #   match: "standup"
+    #   case_insensitive: true
+
+# -----------------------------------------------------------------------------
+# Notification Settings (calbar)
+# -----------------------------------------------------------------------------
+notifications:
+  enabled: true
+  
+  # When to send notifications before event start
+  # Supports: 5m, 10m, 15m, 30m, 1h, etc.
+  before:
+    - 15m
+    - 5m
+
+# -----------------------------------------------------------------------------
+# UI Settings (calbar)
+# -----------------------------------------------------------------------------
+ui:
+  # How far ahead to show events in popup
+  # Supports: 12h, 24h, 48h, 7d, etc.
+  time_range: 24h
+  
+  # Theme: "system", "light", or "dark"
+  theme: system
