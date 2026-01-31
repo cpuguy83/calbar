@@ -55,6 +55,7 @@ type FilterRule struct {
 	Suffix          string `yaml:"suffix,omitempty"`   // Ends with
 	Regex           string `yaml:"regex,omitempty"`    // Regular expression
 	CaseInsensitive bool   `yaml:"case_insensitive"`
+	Exclude         bool   `yaml:"exclude,omitempty"` // If true, exclude matching events instead of including
 
 	// Deprecated: Use Contains, Exact, Prefix, Suffix, or Regex instead.
 	// Kept for backward compatibility. If set and no other match type is specified,

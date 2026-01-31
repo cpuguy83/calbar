@@ -59,10 +59,14 @@ sources:
   #   #   - "Work"
 
 # -----------------------------------------------------------------------------
-# include Filters
+# Event Filters
 # -----------------------------------------------------------------------------
-# Only events matching these rules will be synced.
-# If no filters are defined, ALL events are synced.
+# Filter rules control which events are shown.
+# - Include rules (default): Only matching events are shown
+# - Exclude rules (exclude: true): Matching events are hidden
+#
+# Exclude rules are applied first, then include rules.
+# If no include rules are defined, all non-excluded events are shown.
 #
 # Match types (use exactly one per rule):
 #   contains: Substring match (default)
@@ -72,12 +76,28 @@ sources:
 #   regex:    Regular expression
 
 filters:
-  # Logic mode:
+  # Logic mode for include rules:
   #   "or"  - Include event if it matches ANY rule (default)
   #   "and" - Include event only if it matches ALL rules
   mode: or
   
   rules:
+    # Exclude rules - hide matching events
+    # Exclude all-day events or specific patterns
+    # - field: title
+    #   contains: "OOO"
+    #   exclude: true
+    #   case_insensitive: true
+    
+    # - field: title
+    #   contains: "Canceled:"
+    #   exclude: true
+    
+    # - field: title
+    #   regex: "^(FYI|Blocked):"
+    #   exclude: true
+    
+    # Include rules - only show matching events (include)
     # Substring match (contains)
     - field: title
       contains: "containerd contributors meeting"

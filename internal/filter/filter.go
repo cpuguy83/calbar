@@ -1,4 +1,4 @@
-// Package filter provides include filtering for calendar events.
+// Package filter provides include/exclude filtering for calendar events.
 package filter
 
 import (
@@ -21,10 +21,11 @@ const (
 	MatchRegex                     // Regular expression
 )
 
-// Filter applies include rules to events.
+// Filter applies include/exclude rules to events.
 type Filter struct {
-	mode  string // "or" or "and"
-	rules []rule
+	mode         string // "or" or "and"
+	includeRules []rule // Rules that include events (include)
+	excludeRules []rule // Rules that exclude events (exclude)
 }
 
 type rule struct {
@@ -50,7 +51,11 @@ func New(cfg config.FilterConfig) (*Filter, error) {
 		if err != nil {
 			return nil, fmt.Errorf("rule %d: %w", i, err)
 		}
-		f.rules = append(f.rules, compiled)
+		if r.Exclude {
+			f.excludeRules = append(f.excludeRules, compiled)
+		} else {
+			f.includeRules = append(f.includeRules, compiled)
+		}
 	}
 
 	return f, nil
@@ -133,28 +138,48 @@ func compileRule(r config.FilterRule) (rule, error) {
 	return compiled, nil
 }
 
-// Apply filters events, returning only those that match the include rules.
-// If no rules are defined, all events are returned.
+// Apply filters events, returning only those that pass the filter rules.
+// - Exclude rules are applied first: any event matching an exclude rule is removed
+// - Include rules are applied second: if any include rules exist, only matching events are kept
+// - If no rules are defined, all events are returned.
 func (f *Filter) Apply(events []calendar.Event) []calendar.Event {
 	// No rules = pass everything through
-	if len(f.rules) == 0 {
+	if len(f.includeRules) == 0 && len(f.excludeRules) == 0 {
 		return events
 	}
 
 	var filtered []calendar.Event
 	for _, event := range events {
-		if f.matches(event) {
+		// Check exclude rules first - if any match, skip this event
+		if f.matchesExclude(event) {
+			continue
+		}
+
+		// If no include rules, keep the event (only excludes matter)
+		// If include rules exist, event must match them
+		if len(f.includeRules) == 0 || f.matchesInclude(event) {
 			filtered = append(filtered, event)
 		}
 	}
 	return filtered
 }
 
-// matches checks if an event matches the filter rules.
-func (f *Filter) matches(event calendar.Event) bool {
+// matchesExclude checks if an event matches any exclude rule.
+func (f *Filter) matchesExclude(event calendar.Event) bool {
+	// Any exclude rule matching means exclude
+	for _, r := range f.excludeRules {
+		if r.matches(event) {
+			return true
+		}
+	}
+	return false
+}
+
+// matchesInclude checks if an event matches the include filter rules.
+func (f *Filter) matchesInclude(event calendar.Event) bool {
 	if f.mode == "and" {
 		// All rules must match
-		for _, r := range f.rules {
+		for _, r := range f.includeRules {
 			if !r.matches(event) {
 				return false
 			}
@@ -163,7 +188,7 @@ func (f *Filter) matches(event calendar.Event) bool {
 	}
 
 	// OR mode: any rule must match
-	for _, r := range f.rules {
+	for _, r := range f.includeRules {
 		if r.matches(event) {
 			return true
 		}

@@ -360,19 +360,26 @@ func (p *Popup) updateList() {
 	now := time.Now()
 	cutoff := now.Add(timeRange)
 
+	slog.Debug("filtering events for display", "now", now, "cutoff", cutoff, "total_events", len(events))
+
 	// Filter and sort events
 	var upcoming []calendar.Event
+	var pastCount, futureCount int
 	for _, e := range events {
 		// Skip past events (unless ongoing)
 		if e.End.Before(now) {
+			pastCount++
 			continue
 		}
 		// Skip events too far in the future
 		if e.Start.After(cutoff) {
+			futureCount++
 			continue
 		}
 		upcoming = append(upcoming, e)
 	}
+
+	slog.Debug("events after time filter", "upcoming", len(upcoming), "past", pastCount, "too_far_future", futureCount)
 
 	// Sort by start time
 	sort.Slice(upcoming, func(i, j int) bool {

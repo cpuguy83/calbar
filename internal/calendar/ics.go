@@ -82,13 +82,13 @@ func (s *ICSSource) parseICS(r io.Reader) ([]Event, error) {
 				continue
 			}
 
-			event, err := s.parseEvent(comp)
+			parsed, err := s.parseEvent(comp)
 			if err != nil {
 				// Skip events we can't parse
 				continue
 			}
 
-			events = append(events, event)
+			events = append(events, parsed...)
 		}
 	}
 
@@ -96,83 +96,133 @@ func (s *ICSSource) parseICS(r io.Reader) ([]Event, error) {
 }
 
 // parseEvent converts an ICS VEVENT component to our Event type.
-func (s *ICSSource) parseEvent(comp *ics.Component) (Event, error) {
-	event := Event{
+// For recurring events, it expands occurrences within the next year.
+func (s *ICSSource) parseEvent(comp *ics.Component) ([]Event, error) {
+	base := Event{
 		Source: s.name,
 	}
 
 	// UID
 	if prop := comp.Props.Get(ics.PropUID); prop != nil {
-		event.UID = prop.Value
+		base.UID = prop.Value
 	}
 
 	// Summary (title)
 	if prop := comp.Props.Get(ics.PropSummary); prop != nil {
-		event.Summary = prop.Value
+		base.Summary = prop.Value
 	}
 
 	// Description
 	if prop := comp.Props.Get(ics.PropDescription); prop != nil {
-		event.Description = prop.Value
+		base.Description = prop.Value
 	}
 
 	// Location
 	if prop := comp.Props.Get(ics.PropLocation); prop != nil {
-		event.Location = prop.Value
+		base.Location = prop.Value
 	}
 
 	// URL
 	if prop := comp.Props.Get(ics.PropURL); prop != nil {
-		event.URL = prop.Value
+		base.URL = prop.Value
 	}
 
 	// Organizer
 	if prop := comp.Props.Get(ics.PropOrganizer); prop != nil {
-		event.Organizer = prop.Value
+		base.Organizer = prop.Value
 		// Strip "mailto:" prefix if present
-		if len(event.Organizer) > 7 && event.Organizer[:7] == "mailto:" {
-			event.Organizer = event.Organizer[7:]
+		if len(base.Organizer) > 7 && base.Organizer[:7] == "mailto:" {
+			base.Organizer = base.Organizer[7:]
 		}
 	}
 
 	// Start time
+	var startTime time.Time
+	var isAllDay bool
 	if prop := comp.Props.Get(ics.PropDateTimeStart); prop != nil {
 		t, err := prop.DateTime(time.Local)
 		if err != nil {
-			// Try as date-only (all-day event)
-			t, err = parseDateOnly(prop.Value)
+			// Try parsing as local datetime without timezone (floating time)
+			t, err = parseDateTime(prop.Value)
 			if err != nil {
-				return event, fmt.Errorf("parse start time: %w", err)
+				// Try as date-only (all-day event)
+				t, err = parseDateOnly(prop.Value)
+				if err != nil {
+					return nil, fmt.Errorf("parse start time: %w", err)
+				}
+				isAllDay = true
 			}
-			event.AllDay = true
 		}
-		event.Start = t
+		startTime = t
 	}
 
-	// End time
+	// End time / duration
+	var duration time.Duration
 	if prop := comp.Props.Get(ics.PropDateTimeEnd); prop != nil {
 		t, err := prop.DateTime(time.Local)
 		if err != nil {
-			// Try as date-only (all-day event)
-			t, err = parseDateOnly(prop.Value)
+			// Try parsing as local datetime without timezone (floating time)
+			t, err = parseDateTime(prop.Value)
 			if err != nil {
-				return event, fmt.Errorf("parse end time: %w", err)
+				// Try as date-only (all-day event)
+				t, err = parseDateOnly(prop.Value)
+				if err != nil {
+					return nil, fmt.Errorf("parse end time: %w", err)
+				}
 			}
 		}
-		event.End = t
+		duration = t.Sub(startTime)
 	} else if prop := comp.Props.Get(ics.PropDuration); prop != nil {
-		// Duration instead of end time
 		// TODO: Parse duration properly
-		event.End = event.Start.Add(time.Hour)
+		duration = time.Hour
 	} else {
 		// Default to 1 hour duration
-		event.End = event.Start.Add(time.Hour)
+		duration = time.Hour
 	}
 
-	return event, nil
+	// Check for recurrence rule
+	rset, err := comp.RecurrenceSet(time.Local)
+	if err != nil {
+		return nil, fmt.Errorf("parse recurrence: %w", err)
+	}
+
+	if rset == nil {
+		// Non-recurring event
+		base.Start = startTime
+		base.End = startTime.Add(duration)
+		base.AllDay = isAllDay
+		return []Event{base}, nil
+	}
+
+	// Recurring event - expand occurrences
+	// Look from 30 days ago to 1 year ahead
+	now := time.Now()
+	rangeStart := now.AddDate(0, 0, -30)
+	rangeEnd := now.AddDate(1, 0, 0)
+
+	occurrences := rset.Between(rangeStart, rangeEnd, true)
+
+	var events []Event
+	for _, occ := range occurrences {
+		event := base // Copy base event
+		event.Start = occ
+		event.End = occ.Add(duration)
+		event.AllDay = isAllDay
+		// Make UID unique per occurrence
+		event.UID = fmt.Sprintf("%s_%d", base.UID, occ.Unix())
+		events = append(events, event)
+	}
+
+	return events, nil
 }
 
 // parseDateOnly parses a date-only value (YYYYMMDD format).
 func parseDateOnly(s string) (time.Time, error) {
 	return time.ParseInLocation("20060102", s, time.Local)
+}
+
+// parseDateTime parses a datetime value without timezone (YYYYMMDDTHHmmss format).
+// This handles "floating time" values that are neither UTC nor have a TZID.
+func parseDateTime(s string) (time.Time, error) {
+	return time.ParseInLocation("20060102T150405", s, time.Local)
 }
