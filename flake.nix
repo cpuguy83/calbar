@@ -32,6 +32,8 @@
 
           subPackages = [ "cmd/calbar" ];
 
+          doCheck = false; # Tests require D-Bus/GTK
+
           nativeBuildInputs = [ pkgs.pkg-config ];
           buildInputs = [
             pkgs.gtk4
