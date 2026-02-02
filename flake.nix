@@ -28,7 +28,7 @@
           version = "0.1.0";
           src = ./.;
 
-          vendorHash = "sha256-A7lstv7WrFpn6wTQV6xPj83Yf7ctstq2ah5xwK15m9c=";
+          vendorHash = "sha256-Rh2Y0TR95gt67uxo7QRFHZq0pwu6BSaniAaD1FuxZ8E=";
 
           subPackages = [ "cmd/calbar" ];
 
