@@ -20,38 +20,47 @@
             pkgs = nixpkgs.legacyPackages.${system};
           }
         );
+
+      mkCalbar =
+        pkgs:
+        pkgs.buildGoModule {
+          pname = "calbar";
+          version = "0.1.0";
+          src = ./.;
+
+          vendorHash = "sha256-A7lstv7WrFpn6wTQV6xPj83Yf7ctstq2ah5xwK15m9c=";
+
+          subPackages = [ "cmd/calbar" ];
+
+          nativeBuildInputs = [ pkgs.pkg-config ];
+          buildInputs = [
+            pkgs.gtk4
+            pkgs.gtk4-layer-shell
+            pkgs.libadwaita
+            pkgs.glib
+            pkgs.gobject-introspection
+          ];
+
+          meta = with pkgs.lib; {
+            description = "Calendar system tray app for Linux";
+            homepage = "https://github.com/cpuguy83/calbar";
+            license = licenses.mit;
+            platforms = platforms.linux;
+          };
+        };
     in
     {
       packages = forAllSystems (
         { pkgs }:
         {
-          default = pkgs.buildGoModule {
-            pname = "calbar";
-            version = "0.1.0";
-            src = ./.;
-
-            vendorHash = "sha256-A7lstv7WrFpn6wTQV6xPj83Yf7ctstq2ah5xwK15m9c=";
-
-            subPackages = [ "cmd/calbar" ];
-
-            nativeBuildInputs = [ pkgs.pkg-config ];
-            buildInputs = [
-              pkgs.gtk4
-              pkgs.gtk4-layer-shell
-              pkgs.libadwaita
-              pkgs.glib
-              pkgs.gobject-introspection
-            ];
-
-            meta = with pkgs.lib; {
-              description = "Calendar system tray app for Linux";
-              homepage = "https://github.com/cpuguy83/calbar";
-              license = licenses.mit;
-              platforms = platforms.linux;
-            };
-          };
+          default = mkCalbar pkgs;
+          calbar = mkCalbar pkgs;
         }
       );
+
+      overlays.default = final: prev: {
+        calbar = mkCalbar final;
+      };
 
       homeManagerModules.default = import ./hm-module.nix;
 
