@@ -229,7 +229,9 @@ func (s *MS365Source) fetchPage(ctx context.Context, accessToken, reqURL string)
 
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Prefer", `outlook.body-content-type="text"`) // Get body as plain text
+	// Request times in UTC (always works) and body as plain text
+	// We'll convert to local time when parsing
+	req.Header.Set("Prefer", `outlook.timezone="UTC", outlook.body-content-type="text"`)
 
 	resp, err := s.client.Do(req)
 	if err != nil {
@@ -327,18 +329,11 @@ func (s *MS365Source) convertEvent(ge graphEvent) (Event, error) {
 }
 
 // parseGraphDateTime parses a Graph API datetime value.
+// Times are stored in UTC; conversion to local happens at display time.
 func parseGraphDateTime(gdt graphDateTime) (time.Time, error) {
-	// Graph API returns datetime in the specified timezone
+	// Graph API returns datetime in UTC (as we requested via Prefer header)
 	// Format: "2024-01-15T09:00:00.0000000"
 
-	// Try parsing with timezone
-	loc, err := time.LoadLocation(gdt.TimeZone)
-	if err != nil {
-		// Fall back to local time
-		loc = time.Local
-	}
-
-	// Try different formats
 	formats := []string{
 		"2006-01-02T15:04:05.0000000",
 		"2006-01-02T15:04:05",
@@ -346,7 +341,7 @@ func parseGraphDateTime(gdt graphDateTime) (time.Time, error) {
 	}
 
 	for _, format := range formats {
-		t, err := time.ParseInLocation(format, gdt.DateTime, loc)
+		t, err := time.ParseInLocation(format, gdt.DateTime, time.UTC)
 		if err == nil {
 			return t, nil
 		}

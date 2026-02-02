@@ -499,7 +499,9 @@ func (p *Popup) updateList() {
 
 	now := time.Now()
 	cutoff := now.Add(timeRange)
-	today := now.Truncate(24 * time.Hour)
+	// Get today in local time for all-day event filtering
+	localNow := now.Local()
+	today := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, time.Local)
 
 	// Separate timed events and all-day events
 	var timedEvents []calendar.Event
@@ -514,9 +516,11 @@ func (p *Popup) updateList() {
 		}
 
 		if e.AllDay {
-			// Only include all-day events that span today
-			eventStart := e.Start.Truncate(24 * time.Hour)
-			eventEnd := e.End.Truncate(24 * time.Hour)
+			// Only include all-day events that span today (compare in local time)
+			localStart := e.Start.Local()
+			localEnd := e.End.Local()
+			eventStart := time.Date(localStart.Year(), localStart.Month(), localStart.Day(), 0, 0, 0, 0, time.Local)
+			eventEnd := time.Date(localEnd.Year(), localEnd.Month(), localEnd.Day(), 0, 0, 0, 0, time.Local)
 			if !today.Before(eventStart) && today.Before(eventEnd) {
 				allDayEvents = append(allDayEvents, e)
 			}
@@ -655,8 +659,12 @@ func (p *Popup) populateAllDayEvents(events []calendar.Event, now time.Time) {
 
 // getDayLabel returns a human-readable day label.
 func (p *Popup) getDayLabel(t time.Time, now time.Time) string {
-	today := now.Truncate(24 * time.Hour)
-	eventDay := t.Truncate(24 * time.Hour)
+	// Convert to local time for day comparison
+	localTime := t.Local()
+	localNow := now.Local()
+
+	today := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, time.Local)
+	eventDay := time.Date(localTime.Year(), localTime.Month(), localTime.Day(), 0, 0, 0, 0, time.Local)
 
 	switch {
 	case eventDay.Equal(today):
@@ -664,7 +672,7 @@ func (p *Popup) getDayLabel(t time.Time, now time.Time) string {
 	case eventDay.Equal(today.Add(24 * time.Hour)):
 		return "Tomorrow"
 	default:
-		return t.Format("Monday, Jan 2")
+		return localTime.Format("Monday, Jan 2")
 	}
 }
 
@@ -768,6 +776,9 @@ func (p *Popup) createTimeIndicator(event calendar.Event, now time.Time) *gtk.Bo
 
 	var primary, secondary string
 
+	// Convert to local time for display
+	localStart := event.Start.Local()
+
 	if event.IsOngoing(now) {
 		box.AddCSSClass("now")
 		primary = "Now"
@@ -779,8 +790,8 @@ func (p *Popup) createTimeIndicator(event calendar.Event, now time.Time) *gtk.Bo
 		}
 	} else {
 		startsIn := event.Start.Sub(now)
-		primary = event.Start.Format("3:04")
-		secondary = event.Start.Format("PM")
+		primary = localStart.Format("3:04")
+		secondary = localStart.Format("PM")
 
 		if startsIn <= 15*time.Minute && startsIn > 0 {
 			box.AddCSSClass("imminent")
@@ -818,10 +829,15 @@ func (p *Popup) getEventDuration(event calendar.Event) string {
 
 // formatDateRange returns the date range for an all-day event.
 func (p *Popup) formatDateRange(event calendar.Event, now time.Time) string {
-	startDay := event.Start.Truncate(24 * time.Hour)
+	// Convert to local for display
+	localStart := event.Start.Local()
+	localEnd := event.End.Local()
+	localNow := now.Local()
+
+	startDay := time.Date(localStart.Year(), localStart.Month(), localStart.Day(), 0, 0, 0, 0, time.Local)
 	// All-day events have exclusive end dates, so subtract a day
-	endDay := event.End.Add(-24 * time.Hour).Truncate(24 * time.Hour)
-	today := now.Truncate(24 * time.Hour)
+	endDay := time.Date(localEnd.Year(), localEnd.Month(), localEnd.Day(), 0, 0, 0, 0, time.Local).Add(-24 * time.Hour)
+	today := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, time.Local)
 
 	// Single day event
 	if startDay.Equal(endDay) {
