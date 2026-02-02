@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,6 +26,12 @@ type Popup struct {
 	listBox       *gtk.ListBox
 	allDaySection *gtk.Box
 	statusBar     *gtk.Label
+
+	// Details panel
+	stack        *gtk.Stack
+	listView     *gtk.Box
+	detailsView  *gtk.Box
+	detailsEvent *calendar.Event
 
 	mu            sync.RWMutex
 	events        []calendar.Event
@@ -125,10 +132,15 @@ func (p *Popup) Init() {
 		return true
 	})
 
-	// Escape to close
+	// Escape to close (or go back from details)
 	keyController := gtk.NewEventControllerKey()
 	keyController.ConnectKeyPressed(func(keyval, keycode uint, state gdk.ModifierType) bool {
 		if keyval == gdk.KEY_Escape {
+			// If showing details, go back to list
+			if p.stack != nil && p.stack.VisibleChildName() == "details" {
+				p.hideDetails()
+				return true
+			}
 			p.hideAll()
 			return true
 		}
@@ -149,16 +161,27 @@ func (p *Popup) buildUI() {
 	p.content.AddCSSClass("popup-container")
 	p.window.SetChild(p.content)
 
+	// Stack for switching between list and details views
+	p.stack = gtk.NewStack()
+	p.stack.SetTransitionType(gtk.StackTransitionTypeSlideLeftRight)
+	p.stack.SetTransitionDuration(200)
+	p.stack.SetVExpand(true)
+	p.content.Append(p.stack)
+
+	// List view (contains header, scroll, and all-day section)
+	p.listView = gtk.NewBox(gtk.OrientationVertical, 0)
+	p.stack.AddNamed(p.listView, "list")
+
 	// Header
 	header := p.buildHeader()
-	p.content.Append(header)
+	p.listView.Append(header)
 
 	// Scrolled event list
 	scrolled := gtk.NewScrolledWindow()
 	scrolled.SetVExpand(true)
 	scrolled.SetPolicy(gtk.PolicyNever, gtk.PolicyAutomatic)
 	scrolled.AddCSSClass("event-scroll")
-	p.content.Append(scrolled)
+	p.listView.Append(scrolled)
 
 	p.listBox = gtk.NewListBox()
 	p.listBox.SetSelectionMode(gtk.SelectionNone)
@@ -169,9 +192,13 @@ func (p *Popup) buildUI() {
 	p.allDaySection = gtk.NewBox(gtk.OrientationVertical, 0)
 	p.allDaySection.AddCSSClass("all-day-section")
 	p.allDaySection.SetVisible(false) // Hidden until populated
-	p.content.Append(p.allDaySection)
+	p.listView.Append(p.allDaySection)
 
-	// Status bar
+	// Details view
+	p.detailsView = gtk.NewBox(gtk.OrientationVertical, 0)
+	p.stack.AddNamed(p.detailsView, "details")
+
+	// Status bar (always visible at bottom, outside stack)
 	p.statusBar = gtk.NewLabel("")
 	p.statusBar.AddCSSClass("status-bar")
 	p.statusBar.SetXAlign(0)
@@ -414,6 +441,93 @@ func (p *Popup) applyCSS() {
 			color: alpha(@view_fg_color, 0.4);
 			margin-top: 2px;
 		}
+
+		/* Details panel */
+		.details-header {
+			padding: 12px 16px;
+			border-bottom: 1px solid alpha(@borders, 0.3);
+		}
+
+		.details-back-btn {
+			min-width: 32px;
+			min-height: 32px;
+			padding: 0;
+			border-radius: 8px;
+			background: transparent;
+		}
+
+		.details-back-btn:hover {
+			background: alpha(@view_fg_color, 0.1);
+		}
+
+		.details-content {
+			padding: 16px;
+		}
+
+		.details-title {
+			font-size: 18px;
+			font-weight: 600;
+			color: @view_fg_color;
+			margin-bottom: 16px;
+		}
+
+		.details-row {
+			margin-bottom: 8px;
+		}
+
+		.details-icon {
+			min-width: 24px;
+			font-size: 14px;
+		}
+
+		.details-text {
+			font-size: 14px;
+			color: @view_fg_color;
+		}
+
+		.details-description-section {
+			margin-top: 16px;
+			padding-top: 16px;
+			border-top: 1px solid alpha(@borders, 0.2);
+		}
+
+		.details-section-label {
+			font-size: 12px;
+			font-weight: 600;
+			color: alpha(@view_fg_color, 0.5);
+			text-transform: uppercase;
+			letter-spacing: 0.5px;
+			margin-bottom: 8px;
+		}
+
+		.details-description {
+			font-size: 13px;
+			color: alpha(@view_fg_color, 0.8);
+			line-height: 1.5;
+		}
+
+		.details-join-box {
+			margin-top: 24px;
+			padding-top: 16px;
+			border-top: 1px solid alpha(@borders, 0.2);
+		}
+
+		.details-join-btn {
+			min-width: 120px;
+		}
+
+		/* Make event rows look clickable */
+		.event-card {
+			cursor: pointer;
+		}
+
+		.all-day-row {
+			cursor: pointer;
+		}
+
+		.all-day-row:hover {
+			background: alpha(@accent_color, 0.08);
+		}
 	`
 
 	provider := gtk.NewCSSProvider()
@@ -430,6 +544,11 @@ func (p *Popup) Show() {
 		return
 	}
 	glib.IdleAdd(func() {
+		// Reset to list view when showing
+		if p.stack != nil {
+			p.stack.SetVisibleChildName("list")
+		}
+		p.detailsEvent = nil
 		p.updateList()
 		p.window.SetVisible(true)
 		p.window.Present()
@@ -479,6 +598,11 @@ func (p *Popup) Toggle() {
 		if p.window.IsVisible() {
 			p.hideAll()
 		} else {
+			// Reset to list view when showing
+			if p.stack != nil {
+				p.stack.SetVisibleChildName("list")
+			}
+			p.detailsEvent = nil
 			p.updateList()
 			p.window.SetVisible(true)
 			p.window.Present()
@@ -725,6 +849,14 @@ func (p *Popup) createTimedEventRow(event calendar.Event, now time.Time) *gtk.Bo
 	row := gtk.NewBox(gtk.OrientationHorizontal, 0)
 	row.AddCSSClass("event-card")
 
+	// Make row clickable to show details
+	clickGesture := gtk.NewGestureClick()
+	eventCopy := event // Capture for closure
+	clickGesture.ConnectReleased(func(nPress int, x, y float64) {
+		p.showDetails(eventCopy)
+	})
+	row.AddController(clickGesture)
+
 	// Time indicator
 	timeBox := p.createTimeIndicator(event, now)
 	row.Append(timeBox)
@@ -777,6 +909,14 @@ func (p *Popup) createTimedEventRow(event calendar.Event, now time.Time) *gtk.Bo
 func (p *Popup) createAllDayEventRow(event calendar.Event, now time.Time) *gtk.Box {
 	row := gtk.NewBox(gtk.OrientationVertical, 0)
 	row.AddCSSClass("all-day-row")
+
+	// Make row clickable to show details
+	clickGesture := gtk.NewGestureClick()
+	eventCopy := event // Capture for closure
+	clickGesture.ConnectReleased(func(nPress int, x, y float64) {
+		p.showDetails(eventCopy)
+	})
+	row.AddController(clickGesture)
 
 	// Title
 	title := gtk.NewLabel(event.Summary)
@@ -984,4 +1124,315 @@ func (p *Popup) updateStatusBar() {
 	}
 
 	p.statusBar.SetText(text)
+}
+
+// showDetails displays the event details panel.
+func (p *Popup) showDetails(event calendar.Event) {
+	p.detailsEvent = &event
+
+	// Clear previous details content
+	for child := p.detailsView.FirstChild(); child != nil; child = p.detailsView.FirstChild() {
+		p.detailsView.Remove(child)
+	}
+
+	// Build details header with back button
+	detailsHeader := gtk.NewBox(gtk.OrientationHorizontal, 8)
+	detailsHeader.AddCSSClass("details-header")
+
+	backBtn := gtk.NewButton()
+	backBtn.SetIconName("go-previous-symbolic")
+	backBtn.AddCSSClass("details-back-btn")
+	backBtn.ConnectClicked(func() {
+		p.hideDetails()
+	})
+	detailsHeader.Append(backBtn)
+
+	headerTitle := gtk.NewLabel("Event Details")
+	headerTitle.AddCSSClass("header-title")
+	headerTitle.SetHExpand(true)
+	headerTitle.SetXAlign(0)
+	detailsHeader.Append(headerTitle)
+
+	p.detailsView.Append(detailsHeader)
+
+	// Scrollable content
+	scrolled := gtk.NewScrolledWindow()
+	scrolled.SetVExpand(true)
+	scrolled.SetPolicy(gtk.PolicyNever, gtk.PolicyAutomatic)
+	p.detailsView.Append(scrolled)
+
+	content := gtk.NewBox(gtk.OrientationVertical, 0)
+	content.AddCSSClass("details-content")
+	scrolled.SetChild(content)
+
+	// Event title
+	title := gtk.NewLabel(event.Summary)
+	title.AddCSSClass("details-title")
+	title.SetXAlign(0)
+	title.SetWrap(true)
+	title.SetWrapMode(2) // PANGO_WRAP_WORD_CHAR
+	content.Append(title)
+
+	// Time and date
+	now := time.Now()
+	localStart := event.Start.Local()
+	localEnd := event.End.Local()
+
+	var timeStr string
+	if event.AllDay {
+		timeStr = p.formatDateRange(event, now)
+	} else {
+		dayLabel := p.getDayLabel(event.Start, now)
+		timeStr = fmt.Sprintf("%s • %s – %s", dayLabel, localStart.Format("3:04 PM"), localEnd.Format("3:04 PM"))
+	}
+	p.addDetailRow(content, "📅", timeStr)
+
+	// Duration (for non-all-day events)
+	if !event.AllDay {
+		duration := p.getEventDuration(event)
+		p.addDetailRow(content, "⏱", duration)
+	}
+
+	// Location
+	if event.Location != "" {
+		p.addDetailRow(content, "📍", event.Location)
+	}
+
+	// Organizer
+	if event.Organizer != "" {
+		p.addDetailRow(content, "👤", event.Organizer)
+	}
+
+	// Source
+	if event.Source != "" {
+		p.addDetailRow(content, "📁", event.Source)
+	}
+
+	// Description
+	if event.Description != "" {
+		descSection := gtk.NewBox(gtk.OrientationVertical, 4)
+		descSection.AddCSSClass("details-description-section")
+
+		descLabel := gtk.NewLabel("Description")
+		descLabel.AddCSSClass("details-section-label")
+		descLabel.SetXAlign(0)
+		descSection.Append(descLabel)
+
+		// Strip HTML and clean up description
+		cleanDesc := stripHTML(event.Description)
+		descText := gtk.NewLabel(cleanDesc)
+		descText.AddCSSClass("details-description")
+		descText.SetXAlign(0)
+		descText.SetWrap(true)
+		descText.SetWrapMode(2) // PANGO_WRAP_WORD_CHAR
+		descText.SetSelectable(true)
+		descSection.Append(descText)
+
+		content.Append(descSection)
+	}
+
+	// Join button (if meeting link exists)
+	if meetingLink := links.DetectFromEvent(event.Location, event.Description, event.URL); meetingLink != "" {
+		btnBox := gtk.NewBox(gtk.OrientationHorizontal, 0)
+		btnBox.AddCSSClass("details-join-box")
+		btnBox.SetHAlign(gtk.AlignCenter)
+
+		joinBtn := p.createJoinButton(meetingLink)
+		joinBtn.AddCSSClass("details-join-btn")
+		btnBox.Append(joinBtn)
+
+		content.Append(btnBox)
+	}
+
+	// Switch to details view
+	p.stack.SetVisibleChildName("details")
+}
+
+// hideDetails returns to the event list view.
+func (p *Popup) hideDetails() {
+	p.stack.SetVisibleChildName("list")
+	p.detailsEvent = nil
+}
+
+// addDetailRow adds a row with icon and text to the details panel.
+func (p *Popup) addDetailRow(container *gtk.Box, icon string, text string) {
+	row := gtk.NewBox(gtk.OrientationHorizontal, 8)
+	row.AddCSSClass("details-row")
+
+	iconLabel := gtk.NewLabel(icon)
+	iconLabel.AddCSSClass("details-icon")
+	row.Append(iconLabel)
+
+	textLabel := gtk.NewLabel(text)
+	textLabel.AddCSSClass("details-text")
+	textLabel.SetXAlign(0)
+	textLabel.SetWrap(true)
+	textLabel.SetWrapMode(2) // PANGO_WRAP_WORD_CHAR
+	textLabel.SetSelectable(true)
+	row.Append(textLabel)
+
+	container.Append(row)
+}
+
+// stripHTML removes HTML tags and converts to readable plain text.
+func stripHTML(s string) string {
+	var result []byte
+	inTag := false
+	tagName := ""
+	lastWasNewline := false
+	lastWasSpace := false
+
+	// Helper to add newline(s)
+	addNewline := func(count int) {
+		// Don't add newlines at the start
+		if len(result) == 0 {
+			return
+		}
+		// Count existing trailing newlines
+		existing := 0
+		for i := len(result) - 1; i >= 0 && result[i] == '\n'; i-- {
+			existing++
+		}
+		// Add only what's needed up to count
+		for i := existing; i < count; i++ {
+			result = append(result, '\n')
+		}
+		lastWasNewline = true
+		lastWasSpace = true
+	}
+
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+
+		if c == '<' {
+			inTag = true
+			tagName = ""
+			continue
+		}
+
+		if inTag {
+			if c == '>' {
+				inTag = false
+				// Process tag for formatting
+				tagLower := strings.ToLower(tagName)
+				// Remove leading slash for closing tags
+				isClosing := strings.HasPrefix(tagLower, "/")
+				if isClosing {
+					tagLower = tagLower[1:]
+				}
+				// Extract just the tag name (before any attributes)
+				if spaceIdx := strings.IndexAny(tagLower, " \t\n"); spaceIdx > 0 {
+					tagLower = tagLower[:spaceIdx]
+				}
+
+				switch tagLower {
+				case "br":
+					addNewline(1)
+				case "p", "div", "h1", "h2", "h3", "h4", "h5", "h6":
+					if isClosing {
+						addNewline(2)
+					}
+				case "li":
+					if !isClosing {
+						addNewline(1)
+						result = append(result, []byte("• ")...)
+						lastWasSpace = true
+					}
+				case "tr":
+					if isClosing {
+						addNewline(1)
+					}
+				case "ul", "ol":
+					if isClosing {
+						addNewline(1)
+					}
+				}
+				continue
+			}
+			tagName += string(c)
+			continue
+		}
+
+		// Handle HTML entities
+		if c == '&' {
+			entity := ""
+			for j := i + 1; j < len(s) && j < i+10; j++ {
+				if s[j] == ';' {
+					entity = s[i+1 : j]
+					i = j
+					break
+				}
+				if s[j] == ' ' || s[j] == '<' {
+					break
+				}
+			}
+			if entity != "" {
+				var replacement byte
+				switch entity {
+				case "nbsp":
+					replacement = ' '
+				case "amp":
+					replacement = '&'
+				case "lt":
+					replacement = '<'
+				case "gt":
+					replacement = '>'
+				case "quot":
+					replacement = '"'
+				case "#39", "apos":
+					replacement = '\''
+				case "#8217": // right single quote
+					replacement = '\''
+				case "#8216": // left single quote
+					replacement = '\''
+				case "#8220", "#8221": // double quotes
+					replacement = '"'
+				case "#8211": // en-dash
+					replacement = '-'
+				case "#8212": // em-dash
+					replacement = '-'
+				case "#160": // non-breaking space
+					replacement = ' '
+				default:
+					// Skip unknown entities
+					continue
+				}
+				if replacement == ' ' {
+					if !lastWasSpace {
+						result = append(result, replacement)
+						lastWasSpace = true
+					}
+				} else {
+					result = append(result, replacement)
+					lastWasSpace = false
+					lastWasNewline = false
+				}
+				continue
+			}
+		}
+
+		// Handle whitespace
+		if c == '\n' || c == '\r' {
+			if !lastWasNewline && !lastWasSpace {
+				result = append(result, ' ')
+				lastWasSpace = true
+			}
+			continue
+		}
+		if c == '\t' || c == ' ' {
+			if !lastWasSpace {
+				result = append(result, ' ')
+				lastWasSpace = true
+			}
+			continue
+		}
+
+		// Regular character
+		result = append(result, c)
+		lastWasSpace = false
+		lastWasNewline = false
+	}
+
+	// Trim leading/trailing whitespace
+	return strings.TrimSpace(string(result))
 }
