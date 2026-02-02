@@ -27,8 +27,9 @@ import (
 
 func main() {
 	var (
-		configPath = flag.String("config", "", "path to config file (default: ~/.config/calbar/config.yaml)")
-		verbose    = flag.Bool("v", false, "verbose logging")
+		configPath    = flag.String("config", "", "path to config file (default: ~/.config/calbar/config.yaml)")
+		verbose       = flag.Bool("v", false, "verbose logging")
+		noAutoDismiss = flag.Bool("no-auto-dismiss", false, "disable auto-dismiss on focus loss (useful for screenshots)")
 	)
 	flag.Parse()
 
@@ -61,6 +62,7 @@ func main() {
 	// Create app
 	app := &App{
 		cfg:             cfg,
+		noAutoDismiss:   *noAutoDismiss,
 		notifiedEvents:  make(map[string]time.Time),
 		notificationIDs: make(map[uint32]string),
 	}
@@ -73,11 +75,12 @@ func main() {
 
 // App is the main calbar application.
 type App struct {
-	cfg      *config.Config
-	tray     *tray.Tray
-	popup    *ui.Popup
-	notifier *notify.Notifier
-	syncer   *sync.Syncer
+	cfg           *config.Config
+	noAutoDismiss bool
+	tray          *tray.Tray
+	popup         *ui.Popup
+	notifier      *notify.Notifier
+	syncer        *sync.Syncer
 
 	mu          gosync.RWMutex
 	events      []calendar.Event
@@ -157,7 +160,7 @@ func (a *App) activate() error {
 	}
 
 	// Create popup
-	a.popup = ui.NewPopup(a.cfg.UI.TimeRange)
+	a.popup = ui.NewPopup(a.cfg.UI.TimeRange, a.noAutoDismiss)
 	a.popup.Init()
 	a.popup.OnJoin(func(url string) {
 		slog.Debug("opening meeting link", "url", url)

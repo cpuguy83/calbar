@@ -26,22 +26,25 @@ type Popup struct {
 	allDaySection *gtk.Box
 	statusBar     *gtk.Label
 
-	mu        sync.RWMutex
-	events    []calendar.Event
-	timeRange time.Duration
-	stale     bool
-	lastSync  time.Time
-	loading   bool
+	mu            sync.RWMutex
+	events        []calendar.Event
+	timeRange     time.Duration
+	stale         bool
+	lastSync      time.Time
+	loading       bool
+	pointerInside bool
+	noAutoDismiss bool
 
 	dismissTimer glib.SourceHandle
 	onJoin       func(url string)
 }
 
 // NewPopup creates a new popup window.
-func NewPopup(timeRange time.Duration) *Popup {
+func NewPopup(timeRange time.Duration, noAutoDismiss bool) *Popup {
 	return &Popup{
-		timeRange: timeRange,
-		loading:   true,
+		timeRange:     timeRange,
+		loading:       true,
+		noAutoDismiss: noAutoDismiss,
 	}
 }
 
@@ -67,30 +70,53 @@ func (p *Popup) Init() {
 		gtk4layershell.SetNamespace(p.window, "calbar-popup")
 		p.window.SetDecorated(false)
 
-		// Auto-dismiss on focus loss
-		p.window.NotifyProperty("is-active", func() {
-			if p.window.IsVisible() {
-				if p.window.IsActive() {
-					if p.dismissTimer != 0 {
-						glib.SourceRemove(p.dismissTimer)
-						p.dismissTimer = 0
-					}
-				} else {
-					p.mu.RLock()
-					loading := p.loading
-					p.mu.RUnlock()
-					if !loading && p.dismissTimer == 0 {
-						p.dismissTimer = glib.TimeoutAdd(300, func() bool {
-							if p.window.IsVisible() && !p.window.IsActive() {
-								p.hideAll()
-							}
+		// Auto-dismiss on focus loss (unless disabled)
+		if !p.noAutoDismiss {
+			p.window.NotifyProperty("is-active", func() {
+				if p.window.IsVisible() {
+					if p.window.IsActive() {
+						if p.dismissTimer != 0 {
+							glib.SourceRemove(p.dismissTimer)
 							p.dismissTimer = 0
-							return false
-						})
+						}
+					} else {
+						p.mu.RLock()
+						loading := p.loading
+						pointerInside := p.pointerInside
+						p.mu.RUnlock()
+						// Only dismiss if pointer is also outside
+						if !loading && !pointerInside && p.dismissTimer == 0 {
+							p.startDismissTimer()
+						}
 					}
 				}
-			}
-		})
+			})
+
+			// Track pointer enter/leave for smart dismiss behavior
+			motionController := gtk.NewEventControllerMotion()
+			motionController.ConnectEnter(func(x, y float64) {
+				slog.Debug("pointer entered popup", "x", x, "y", y)
+				p.mu.Lock()
+				p.pointerInside = true
+				p.mu.Unlock()
+				// Cancel any pending dismiss
+				if p.dismissTimer != 0 {
+					glib.SourceRemove(p.dismissTimer)
+					p.dismissTimer = 0
+				}
+			})
+			motionController.ConnectLeave(func() {
+				slog.Debug("pointer left popup")
+				p.mu.Lock()
+				p.pointerInside = false
+				p.mu.Unlock()
+				// If window not active and pointer left, start dismiss timer
+				if p.window.IsVisible() && !p.window.IsActive() {
+					p.startDismissTimer()
+				}
+			})
+			p.window.AddController(motionController)
+		}
 	}
 
 	// Hide on close request
@@ -424,6 +450,24 @@ func (p *Popup) hideAll() {
 		glib.SourceRemove(p.dismissTimer)
 		p.dismissTimer = 0
 	}
+}
+
+// startDismissTimer starts a timer to dismiss the popup after a short delay.
+func (p *Popup) startDismissTimer() {
+	if p.dismissTimer != 0 {
+		return
+	}
+	p.dismissTimer = glib.TimeoutAdd(300, func() bool {
+		p.mu.RLock()
+		pointerInside := p.pointerInside
+		p.mu.RUnlock()
+		// Double-check: only dismiss if still not active and pointer still outside
+		if p.window.IsVisible() && !p.window.IsActive() && !pointerInside {
+			p.hideAll()
+		}
+		p.dismissTimer = 0
+		return false
+	})
 }
 
 // Toggle shows or hides the popup.
