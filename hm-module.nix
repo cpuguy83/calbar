@@ -15,6 +15,7 @@ in
 
     package = lib.mkOption {
       type = lib.types.package;
+      default = pkgs.calbar;
       description = "The CalBar package to use.";
     };
 
