@@ -3,8 +3,10 @@ module github.com/cpuguy83/calbar
 go 1.25.5
 
 require (
+	github.com/AzureAD/microsoft-authentication-library-for-go v1.6.0
+	github.com/diamondburned/gotk4-adwaita/pkg v0.0.0-20250703085337-e94555b846b6
 	github.com/diamondburned/gotk4-layer-shell/pkg v0.0.0-20240109211357-6efa9f6dc438
-	github.com/diamondburned/gotk4/pkg v0.3.1
+	github.com/diamondburned/gotk4/pkg v0.3.2-0.20250703063411-16654385f59a
 	github.com/emersion/go-ical v0.0.0-20250609112844-439c63cef608
 	github.com/emersion/go-webdav v0.7.0
 	github.com/godbus/dbus/v5 v5.2.2
@@ -12,7 +14,6 @@ require (
 )
 
 require (
-	github.com/AzureAD/microsoft-authentication-library-for-go v1.6.0 // indirect
 	github.com/KarpelesLab/weak v0.1.1 // indirect
 	github.com/golang-jwt/jwt/v5 v5.2.2 // indirect
 	github.com/google/uuid v1.3.0 // indirect

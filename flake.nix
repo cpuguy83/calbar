@@ -38,6 +38,7 @@
             buildInputs = [
               pkgs.gtk4
               pkgs.gtk4-layer-shell
+              pkgs.libadwaita
               pkgs.glib
               pkgs.gobject-introspection
             ];
@@ -64,6 +65,7 @@
               pkg-config
               gtk4
               gtk4-layer-shell
+              libadwaita
               glib
               gobject-introspection
             ];
