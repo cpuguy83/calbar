@@ -24,8 +24,8 @@ const (
 // Filter applies include/exclude rules to events.
 type Filter struct {
 	mode         string // "or" or "and"
-	includeRules []rule // Rules that include events (include)
-	excludeRules []rule // Rules that exclude events (exclude)
+	includeRules []rule // Rules that include events
+	excludeRules []rule // Rules that exclude events
 }
 
 type rule struct {

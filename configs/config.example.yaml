@@ -72,7 +72,7 @@ filters:
     #   contains: "Canceled:"
     #   exclude: true
     
-    # Include rules - only show matching events (include)
+    # Include rules - only show matching events
     # Substring match (contains)
     - field: title
       contains: "standup"

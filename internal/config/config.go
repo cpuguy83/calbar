@@ -36,7 +36,7 @@ type SourceConfig struct {
 	Password    string       `yaml:"password,omitempty"`
 	PasswordCmd string       `yaml:"password_cmd,omitempty"`
 	Calendars   []string     `yaml:"calendars,omitempty"` // For CalDAV/MS365: which calendars to sync
-	Filters     FilterConfig `yaml:"filters,omitempty"`   // Per-source filters (include)
+	Filters     FilterConfig `yaml:"filters,omitempty"`   // Per-source filters (include/exclude)
 }
 
 // FilterConfig configures event filtering.

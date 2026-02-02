@@ -77,8 +77,8 @@ sources:
   - name: "Work (MS365)"
     type: ms365
 
-# include filters (only matching events are synced)
-# Leave empty to sync all events
+# Filters (only matching events are shown)
+# Leave empty to show all events
 filters:
   mode: or  # "or" = match any rule, "and" = match all rules
   rules:
