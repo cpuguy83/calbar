@@ -1,45 +1,19 @@
 # CalBar
 
-A Dato-like calendar app for Linux desktops. Syncs calendar feeds from multiple sources, applies include filters, and provides a system tray interface with upcoming events, meeting join buttons, and desktop notifications.
+A calendar tray app for Linux desktops, similar to [Dato](https://sindresorhus.com/dato) for macOS.
+
+> **Note:** This is a work in progress, built for my own needs. It may not work for you, and the API/config format may change without notice.
 
 ![Status](https://img.shields.io/badge/status-alpha-orange)
 
 ## Features
 
-- **Multiple calendar sources**: ICS feeds, CalDAV (Nextcloud, Radicale), iCloud, Microsoft 365
-- **include filtering**: Only show events matching specific rules (great for filtering noisy work calendars)
+- **Multiple calendar sources**: ICS feeds, CalDAV, Microsoft 365
+- **Include/exclude filtering**: Only show events matching specific rules (great for filtering noisy work calendars)
 - **System tray integration**: StatusNotifierItem (SNI) for Waybar and other modern tray implementations
 - **Meeting link detection**: Automatically detects Zoom, Teams, Meet, and Webex links
 - **Desktop notifications**: Configurable reminders before events with "Join" action buttons
 - **Standard ICS output**: Synced calendar is a standard ICS file, usable by any calendar app
-
-## Architecture
-
-CalBar consists of two binaries:
-
-| Binary | Purpose |
-|--------|---------|
-| `calsync` | Daemon that fetches calendars, applies filters, outputs merged ICS file |
-| `calbar` | System tray app that reads ICS file, shows popup, sends notifications |
-
-The ICS file (`~/.local/share/calbar/calendar.ics`) acts as the interface between them.
-
-```
-External Sources (ICS, CalDAV, iCloud, MS365)
-                    │
-                    ▼
-            ┌──────────────┐
-            │   calsync    │  ← Fetch, filter, merge
-            └──────┬───────┘
-                   │
-                   ▼
-    ~/.local/share/calbar/calendar.ics
-                   │
-                   ▼
-            ┌──────────────┐
-            │   calbar     │  ← Tray, popup, notifications
-            └──────────────┘
-```
 
 ## Installation
 
@@ -62,9 +36,9 @@ sudo make install
 
 ### Dependencies
 
-- Go 1.21+
+- Go 1.25+
 - D-Bus (for notifications and system tray)
-- GTK4 (optional, for popup window - coming soon)
+- GTK4 with libadwaita (soon to be optional dmenu support instead of GTK4)
 
 ## Configuration
 
@@ -80,10 +54,10 @@ sync:
 
 # Calendar sources
 sources:
-  # Simple ICS feed (most common)
-  - name: "Work Calendar"
+  # ICS feed (most common)
+  - name: "Personal"
     type: ics
-    url: "https://outlook.office365.com/owa/calendar/YOUR_CALENDAR_ID/calendar.ics"
+    url: "https://calendar.google.com/calendar/ical/YOUR_CALENDAR_ID/basic.ics"
 
   # ICS feed with authentication
   - name: "Private Calendar"
@@ -92,22 +66,16 @@ sources:
     username: "myuser"
     password_cmd: "pass show calendar/example"  # Use a password manager
 
-  # CalDAV server (Nextcloud, Radicale, etc.)
-  - name: "Nextcloud"
+  # CalDAV server
+  - name: "CalDAV"
     type: caldav
-    url: "https://cloud.example.com/remote.php/dav"
+    url: "https://caldav.example.com/calendars/user/default/"
     username: "myuser"
-    password_cmd: "pass show nextcloud/password"
-    calendars:  # Optional: specific calendars only
-      - "Personal"
-      - "Work"
+    password_cmd: "pass show caldav/password"
 
-  # Apple iCloud Calendar
-  - name: "iCloud"
-    type: icloud
-    username: "your@icloud.com"
-    password_cmd: "pass show apple/app-specific-password"
-    # Generate app-specific password at https://appleid.apple.com
+  # Microsoft 365 via Microsoft Identity Broker (Linux SSO)
+  - name: "Work (MS365)"
+    type: ms365
 
 # include filters (only matching events are synced)
 # Leave empty to sync all events
@@ -146,47 +114,41 @@ ui:
 
 ## Usage
 
-### Quick test
-
-```bash
-# Test sync (one-shot mode)
-./calsync --once -v
-
-# Check the output
-cat ~/.local/share/calbar/calendar.ics
-```
-
 ### Running manually
 
 ```bash
-# Start the sync daemon (runs every 5 minutes by default)
-./calsync &
+# Start CalBar
+./calbar --config ~/.config/calbar/config.yaml
 
-# Start the tray app
-./calbar
+# With verbose logging
+./calbar --config ~/.config/calbar/config.yaml -v
 ```
 
 ### Using systemd (recommended)
 
 ```bash
-# Enable and start both services
-systemctl --user enable --now calsync calbar
+# Enable and start the service
+systemctl --user enable --now calbar
 
 # Check status
-systemctl --user status calsync calbar
+systemctl --user status calbar
 
 # View logs
-journalctl --user -u calsync -f
 journalctl --user -u calbar -f
 ```
 
 ## Calendar Source Setup
 
-### Microsoft 365 / Outlook
+### Microsoft 365
 
+For ICS export:
 1. Go to Outlook on the web → Calendar → Settings → Shared calendars
 2. Publish your calendar and copy the ICS link
 3. Add to config as an `ics` type source
+
+For native MS365 integration (uses Linux SSO via Microsoft Identity Broker):
+1. Add to config as an `ms365` type source
+2. Requires Edge browser signed in to your Microsoft account
 
 ### Google Calendar
 
@@ -195,20 +157,14 @@ journalctl --user -u calbar -f
 3. Copy the "Secret address in iCal format"
 4. Add to config as an `ics` type source
 
-### Apple iCloud
+### CalDAV
 
-1. Go to https://appleid.apple.com → Security → App-Specific Passwords
-2. Generate a new app-specific password for CalBar
-3. Add to config as an `icloud` type source with your Apple ID email
-
-### Nextcloud / CalDAV
-
-1. Get your CalDAV URL (usually `https://your-server/remote.php/dav`)
+1. Get your CalDAV URL from your calendar provider
 2. Add to config as a `caldav` type source
 
 ## Filtering
 
-CalBar uses include filtering - only events matching your rules are synced. This is useful when you have a noisy work calendar but only care about specific meetings.
+CalBar supports include/exclude filtering - you can specify which events to show or hide. This is useful when you have a noisy work calendar but only care about specific meetings.
 
 ### Filter fields
 
@@ -313,8 +269,8 @@ Make sure your system tray supports StatusNotifierItem (SNI):
 ### Sync not working
 
 ```bash
-# Test with verbose logging
-./calsync --once -v
+# Run with verbose logging to see what's happening
+./calbar --config ~/.config/calbar/config.yaml -v
 
 # Check if the ICS URL is accessible
 curl -I "YOUR_ICS_URL"
@@ -335,4 +291,4 @@ MIT
 
 ## Contributing
 
-Contributions welcome! Please read `AGENTS.md` for the project structure and how different components are organized.
+Contributions welcome!
