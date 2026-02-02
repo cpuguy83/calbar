@@ -52,6 +52,8 @@
         }
       );
 
+      homeManagerModules.default = import ./hm-module.nix;
+
       devShells = forAllSystems (
         { pkgs }:
         {
