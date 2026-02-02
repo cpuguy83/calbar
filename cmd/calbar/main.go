@@ -60,8 +60,9 @@ func main() {
 
 	// Create app
 	app := &App{
-		cfg:            cfg,
-		notifiedEvents: make(map[string]time.Time),
+		cfg:             cfg,
+		notifiedEvents:  make(map[string]time.Time),
+		notificationIDs: make(map[uint32]string),
 	}
 
 	if err := app.Run(); err != nil {
@@ -84,7 +85,8 @@ type App struct {
 	lastSyncErr error
 
 	// Notification tracking
-	notifiedEvents map[string]time.Time
+	notifiedEvents  map[string]time.Time
+	notificationIDs map[uint32]string // notification ID -> meeting URL
 
 	// Context for background goroutines
 	ctx    context.Context
@@ -178,10 +180,18 @@ func (a *App) activate() error {
 		if err != nil {
 			slog.Warn("failed to initialize notifications", "error", err)
 		} else {
-			// Watch for notification actions
+			// Watch for notification actions (e.g., "Join Meeting" button)
 			a.notifier.WatchActions(func(id uint32, actionKey string) {
-				slog.Debug("notification action", "id", id, "action", actionKey)
-				// TODO: Handle join action - need to track URL per notification ID
+				if actionKey == "join" {
+					a.mu.RLock()
+					url := a.notificationIDs[id]
+					a.mu.RUnlock()
+
+					if url != "" {
+						slog.Debug("opening meeting from notification", "url", url)
+						links.Open(url)
+					}
+				}
 			})
 		}
 	}
@@ -407,8 +417,17 @@ func (a *App) sendNotification(event calendar.Event, startsIn time.Duration) {
 		notif.Urgency = notify.UrgencyCritical
 	}
 
-	if _, err := a.notifier.Send(notif); err != nil {
+	id, err := a.notifier.Send(notif)
+	if err != nil {
 		slog.Warn("failed to send notification", "error", err)
+		return
+	}
+
+	// Track notification ID -> meeting URL for join action
+	if meetingLink != "" && id != 0 {
+		a.mu.Lock()
+		a.notificationIDs[id] = meetingLink
+		a.mu.Unlock()
 	}
 }
 
