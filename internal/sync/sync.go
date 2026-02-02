@@ -179,9 +179,7 @@ func createSources(cfgs []config.SourceConfig) ([]sourceWithFilter, error) {
 			src = calendar.NewICloudSource(cfg.Name, cfg.Username, password, cfg.Calendars)
 
 		case "ms365":
-			// TODO: Implement MS365 source
-			slog.Warn("ms365 source not yet implemented", "name", cfg.Name)
-			continue
+			src = calendar.NewMS365Source(cfg.Name)
 
 		default:
 			slog.Warn("unknown source type", "type", cfg.Type, "name", cfg.Name)
