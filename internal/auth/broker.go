@@ -123,9 +123,14 @@ func (b *Broker) GetToken(ctx context.Context) (*Token, error) {
 	defer b.mu.Unlock()
 
 	// Return cached token if still valid (with 5 minute buffer)
-	if b.cachedToken != nil && time.Now().Add(5*time.Minute).Before(b.cachedToken.ExpiresOn) {
-		slog.Debug("using cached token", "expires", b.cachedToken.ExpiresOn)
-		return b.cachedToken, nil
+	if b.cachedToken != nil {
+		now := time.Now()
+		bufferTime := now.Add(5 * time.Minute)
+		if bufferTime.Before(b.cachedToken.ExpiresOn) {
+			slog.Debug("using cached token", "expires", b.cachedToken.ExpiresOn, "remaining", b.cachedToken.ExpiresOn.Sub(now))
+			return b.cachedToken, nil
+		}
+		slog.Debug("cached token expired or expiring soon", "expires", b.cachedToken.ExpiresOn, "now", now)
 	}
 
 	if err := b.connect(); err != nil {
@@ -136,6 +141,7 @@ func (b *Broker) GetToken(ctx context.Context) (*Token, error) {
 	if b.cachedAccount != nil {
 		token, err := b.acquireTokenSilently(ctx, b.cachedAccount)
 		if err == nil {
+			slog.Debug("refreshed token via cached account", "expires", token.ExpiresOn)
 			b.cachedToken = token
 			return token, nil
 		}
@@ -154,6 +160,8 @@ func (b *Broker) GetToken(ctx context.Context) (*Token, error) {
 	for _, acct := range accounts {
 		token, err := b.acquireTokenSilently(ctx, acct)
 		if err == nil {
+			username, _ := acct["username"].(string)
+			slog.Debug("refreshed token via account", "username", username, "expires", token.ExpiresOn)
 			b.cachedAccount = acct
 			b.cachedToken = token
 			return token, nil
@@ -290,36 +298,45 @@ func (b *Broker) acquireTokenSilently(ctx context.Context, account map[string]an
 		return nil, err
 	}
 
-	// Extract token from response - can be at top level or nested
-	accessToken, _ := resp["accessToken"].(string)
-	if accessToken == "" {
-		// Try nested brokerTokenResponse
-		if tokenResp, ok := resp["brokerTokenResponse"].(map[string]any); ok {
-			accessToken, _ = tokenResp["accessToken"].(string)
-			if errObj, ok := tokenResp["error"].(map[string]any); ok {
-				errJSON, _ := json.Marshal(errObj)
-				return nil, fmt.Errorf("token response error: %s", errJSON)
-			}
+	// Extract token from response - can be at top level or nested in brokerTokenResponse
+	var accessToken string
+	var tokenSource map[string]any = resp
+
+	// Check for nested brokerTokenResponse first (this is where the broker puts it)
+	if tokenResp, ok := resp["brokerTokenResponse"].(map[string]any); ok {
+		tokenSource = tokenResp
+		accessToken, _ = tokenResp["accessToken"].(string)
+		if errObj, ok := tokenResp["error"].(map[string]any); ok {
+			errJSON, _ := json.Marshal(errObj)
+			return nil, fmt.Errorf("token response error: %s", errJSON)
 		}
+	}
+
+	// Fall back to top level if not found in nested response
+	if accessToken == "" {
+		accessToken, _ = resp["accessToken"].(string)
+		tokenSource = resp
 	}
 
 	if accessToken == "" {
 		return nil, errors.New("no access token in response")
 	}
 
-	// Parse expiration - try different field names and formats
+	// Parse expiration from the same source as the token
+	// Broker returns expiresOn as milliseconds since epoch
 	var expiresOn time.Time
-	if exp, ok := resp["expiresOn"].(float64); ok {
-		expiresOn = time.Unix(int64(exp), 0)
-	} else if exp, ok := resp["expiresOn"].(int64); ok {
-		expiresOn = time.Unix(exp, 0)
+	if exp, ok := tokenSource["expiresOn"].(float64); ok {
+		expiresOn = time.UnixMilli(int64(exp))
+	} else if exp, ok := tokenSource["expiresOn"].(int64); ok {
+		expiresOn = time.UnixMilli(exp)
 	} else {
-		// Default to 1 hour from now if not specified
-		expiresOn = time.Now().Add(time.Hour)
+		// If we can't determine expiration, use a short default to force refresh soon
+		expiresOn = time.Now().Add(5 * time.Minute)
+		slog.Warn("could not parse token expiration, using short default", "expires", expiresOn)
 	}
 
-	// Get account ID from response or account object
-	accountID, _ := resp["accountId"].(string)
+	// Get account ID from token source or account object
+	accountID, _ := tokenSource["accountId"].(string)
 	if accountID == "" {
 		accountID, _ = account["localAccountId"].(string)
 	}
