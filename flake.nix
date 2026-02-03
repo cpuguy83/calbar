@@ -23,6 +23,11 @@
 
       mkCalbar =
         pkgs:
+        {
+          gtk ? {
+            disable = false;
+          },
+        }:
         pkgs.buildGoModule {
           pname = "calbar";
           version = "0.1.0";
@@ -32,10 +37,13 @@
 
           subPackages = [ "cmd/calbar" ];
 
+          # Add nogtk build tag when GTK is disabled
+          tags = pkgs.lib.optionals gtk.disable [ "nogtk" ];
+
           doCheck = false; # Tests require D-Bus/GTK
 
-          nativeBuildInputs = [ pkgs.pkg-config ];
-          buildInputs = [
+          nativeBuildInputs = pkgs.lib.optionals (!gtk.disable) [ pkgs.pkg-config ];
+          buildInputs = pkgs.lib.optionals (!gtk.disable) [
             pkgs.gtk4
             pkgs.gtk4-layer-shell
             pkgs.libadwaita
@@ -55,13 +63,15 @@
       packages = forAllSystems (
         { pkgs }:
         {
-          default = mkCalbar pkgs;
-          calbar = mkCalbar pkgs;
+          default = mkCalbar pkgs { };
+          calbar = mkCalbar pkgs { };
+          calbar-lite = mkCalbar pkgs { gtk.disable = true; };
         }
       );
 
       overlays.default = final: prev: {
-        calbar = mkCalbar final;
+        calbar = mkCalbar final { };
+        calbar-lite = mkCalbar final { gtk.disable = true; };
       };
 
       homeManagerModules.default = import ./hm-module.nix;

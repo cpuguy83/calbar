@@ -19,6 +19,12 @@ in
       description = "The CalBar package to use.";
     };
 
+    gtk.disable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Disable GTK and use dmenu-style launchers only. Cannot be used together with a custom package option.";
+    };
+
     settings = lib.mkOption {
       type = tomlFormat.type;
       default = { };
@@ -49,7 +55,16 @@ in
   };
 
   config = lib.mkIf cfg.enable {
-    home.packages = [ cfg.package ];
+    assertions = [
+      {
+        assertion = !(cfg.gtk.disable && cfg.package != pkgs.calbar);
+        message = "services.calbar: Cannot set both gtk.disable and a custom package. Use either gtk.disable = true OR package = pkgs.calbar-lite.";
+      }
+    ];
+
+    home.packages = [
+      (if cfg.gtk.disable then pkgs.calbar-lite else cfg.package)
+    ];
 
     xdg.configFile."calbar/config.yaml" = lib.mkIf (cfg.settings != { }) {
       source = tomlFormat.generate "calbar-config.yaml" cfg.settings;
@@ -59,15 +74,15 @@ in
       name = "CalBar";
       genericName = "Calendar";
       comment = "Calendar system tray app";
-      exec = "${cfg.package}/bin/calbar";
+      exec = "${if cfg.gtk.disable then pkgs.calbar-lite else cfg.package}/bin/calbar";
       icon = "x-office-calendar";
       terminal = false;
       type = "Application";
       categories = [
         "Utility"
         "Calendar"
-        "GTK"
-      ];
+      ]
+      ++ lib.optionals (!cfg.gtk.disable) [ "GTK" ];
       startupNotify = false;
     };
 
@@ -79,7 +94,7 @@ in
         After = [ "graphical-session.target" ];
       };
       Service = {
-        ExecStart = "${cfg.package}/bin/calbar";
+        ExecStart = "${if cfg.gtk.disable then pkgs.calbar-lite else cfg.package}/bin/calbar";
         Restart = "on-failure";
         RestartSec = 5;
       };
