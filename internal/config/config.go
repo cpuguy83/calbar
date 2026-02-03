@@ -74,6 +74,14 @@ type UIConfig struct {
 	TimeRange time.Duration `yaml:"time_range"` // How far ahead to look (default: 7 days)
 	MaxEvents int           `yaml:"max_events"` // Max events to show (default: 20)
 	Theme     string        `yaml:"theme"`      // "system", "light", "dark"
+	Backend   string        `yaml:"backend"`    // "auto", "gtk", "menu" (default: auto)
+	Menu      MenuConfig    `yaml:"menu"`       // Menu-specific configuration
+}
+
+// MenuConfig configures the dmenu-style UI backend.
+type MenuConfig struct {
+	Program string   `yaml:"program"` // dmenu program to use (auto-detect if empty)
+	Args    []string `yaml:"args"`    // extra args to pass to the program
 }
 
 // Load reads configuration from the default location (~/.config/calbar/config.yaml).
@@ -130,6 +138,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.UI.Theme == "" {
 		c.UI.Theme = "system"
+	}
+	if c.UI.Backend == "" {
+		c.UI.Backend = "auto"
 	}
 	if c.Notifications.Before == nil {
 		c.Notifications.Before = []time.Duration{15 * time.Minute, 5 * time.Minute}

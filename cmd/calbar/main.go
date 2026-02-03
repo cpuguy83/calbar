@@ -7,9 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/signal"
 	gosync "sync"
-	"syscall"
 	"time"
 
 	"github.com/cpuguy83/calbar/internal/calendar"
@@ -19,10 +17,7 @@ import (
 	"github.com/cpuguy83/calbar/internal/sync"
 	"github.com/cpuguy83/calbar/internal/tray"
 	"github.com/cpuguy83/calbar/internal/ui"
-
-	"github.com/diamondburned/gotk4/pkg/gio/v2"
-	"github.com/diamondburned/gotk4/pkg/glib/v2"
-	"github.com/diamondburned/gotk4/pkg/gtk/v4"
+	"github.com/cpuguy83/calbar/internal/ui/menu"
 )
 
 func main() {
@@ -57,6 +52,7 @@ func main() {
 	slog.Info("starting calbar",
 		"interval", cfg.Sync.Interval,
 		"time_range", cfg.UI.TimeRange,
+		"backend", cfg.UI.Backend,
 	)
 
 	// Create app
@@ -78,7 +74,7 @@ type App struct {
 	cfg           *config.Config
 	noAutoDismiss bool
 	tray          *tray.Tray
-	popup         *ui.Popup
+	ui            ui.UI
 	notifier      *notify.Notifier
 	syncer        *sync.Syncer
 
@@ -96,47 +92,51 @@ type App struct {
 	cancel context.CancelFunc
 }
 
-// Run starts the application with GTK main loop.
-func (a *App) Run() error {
-	// Create GTK application
-	gtkApp := gtk.NewApplication("com.github.cpuguy83.calbar", gio.ApplicationFlagsNone)
+// selectBackend determines which UI backend to use based on config.
+func (a *App) selectBackend() (ui.UI, error) {
+	backend := a.cfg.UI.Backend
 
-	gtkApp.ConnectActivate(func() {
-		// Hold the application open even without visible windows
-		// This is needed for tray apps that don't always have a window shown
-		gtkApp.Hold()
-
-		if err := a.activate(); err != nil {
-			slog.Error("activation failed", "error", err)
-			gtkApp.Quit()
+	switch backend {
+	case "gtk":
+		if !ui.GTKAvailable() {
+			return nil, fmt.Errorf("GTK requested but not available (build with CGO and GTK libraries)")
 		}
-	})
+		slog.Info("using GTK backend")
+		return ui.NewGTK(ui.Config{
+			TimeRange:     a.cfg.UI.TimeRange,
+			NoAutoDismiss: a.noAutoDismiss,
+		}), nil
 
-	// Handle signals to quit GTK gracefully
-	go func() {
-		sigCh := make(chan os.Signal, 1)
-		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-		<-sigCh
-		slog.Info("received signal, shutting down")
-		if a.cancel != nil {
-			a.cancel()
-		}
-		glib.IdleAdd(func() {
-			gtkApp.Quit()
+	case "menu":
+		slog.Info("using menu backend")
+		return menu.New(menu.Config{
+			Program:   a.cfg.UI.Menu.Program,
+			Args:      a.cfg.UI.Menu.Args,
+			TimeRange: a.cfg.UI.TimeRange,
 		})
-	}()
 
-	// Run GTK main loop (blocks until app.Quit() is called)
-	if code := gtkApp.Run(nil); code != 0 {
-		return fmt.Errorf("GTK application exited with code %d", code)
+	case "auto", "":
+		// Auto: prefer GTK if available, fall back to menu
+		if ui.GTKAvailable() {
+			slog.Info("auto-selected GTK backend")
+			return ui.NewGTK(ui.Config{
+				TimeRange:     a.cfg.UI.TimeRange,
+				NoAutoDismiss: a.noAutoDismiss,
+			}), nil
+		}
+		slog.Info("GTK not available, falling back to menu backend")
+		return menu.New(menu.Config{
+			Program:   a.cfg.UI.Menu.Program,
+			Args:      a.cfg.UI.Menu.Args,
+			TimeRange: a.cfg.UI.TimeRange,
+		})
+
+	default:
+		return nil, fmt.Errorf("unknown UI backend: %s", backend)
 	}
-
-	// Cleanup
-	a.cleanup()
-	return nil
 }
 
-// activate is called when the GTK application is activated.
+// activate initializes all app components.
 func (a *App) activate() error {
 	var err error
 
@@ -159,18 +159,30 @@ func (a *App) activate() error {
 		return fmt.Errorf("create tray: %w", err)
 	}
 
-	// Create popup
-	a.popup = ui.NewPopup(a.cfg.UI.TimeRange, a.noAutoDismiss)
-	a.popup.Init()
-	a.popup.OnJoin(func(url string) {
-		slog.Debug("opening meeting link", "url", url)
-		links.Open(url)
+	// Select and create UI backend
+	a.ui, err = a.selectBackend()
+	if err != nil {
+		return fmt.Errorf("create UI backend: %w", err)
+	}
+
+	// Initialize UI
+	if err := a.ui.Init(); err != nil {
+		return fmt.Errorf("init UI: %w", err)
+	}
+
+	// Set up action handler
+	a.ui.OnAction(func(action ui.Action) {
+		switch action.Type {
+		case ui.ActionOpenURL:
+			slog.Debug("opening URL", "url", action.URL)
+			links.Open(action.URL)
+		}
 	})
 
-	// Set tray click handler to toggle popup
+	// Set tray click handler to toggle UI
 	a.tray.OnActivate(func() {
-		slog.Debug("tray activated, toggling popup")
-		a.popup.Toggle()
+		slog.Debug("tray activated, toggling UI")
+		a.ui.Toggle()
 	})
 
 	if err := a.tray.Start(); err != nil {
@@ -240,13 +252,11 @@ func (a *App) onSyncComplete(events []calendar.Event, err error) {
 	a.lastSync = time.Now()
 	a.mu.Unlock()
 
-	// Update UI on GTK main thread
-	glib.IdleAdd(func() {
-		a.updateUI()
-	})
+	// Update UI - schedule on appropriate thread
+	a.scheduleUIUpdate()
 }
 
-// updateUI updates the popup and tray based on current state.
+// updateUI updates the UI and tray based on current state.
 func (a *App) updateUI() {
 	a.mu.RLock()
 	events := a.events
@@ -254,12 +264,12 @@ func (a *App) updateUI() {
 	lastSyncErr := a.lastSyncErr
 	a.mu.RUnlock()
 
-	// Update popup with events
-	a.popup.SetEvents(events)
+	// Update UI with events
+	a.ui.SetEvents(events)
 
 	// Update stale state
 	isStale := lastSyncErr != nil || time.Since(lastSync) > 2*a.syncer.Interval()
-	a.popup.SetStale(isStale)
+	a.ui.SetStale(isStale)
 
 	// Update tray state
 	if isStale {
@@ -340,9 +350,7 @@ func (a *App) notificationLoop() {
 		case <-ticker.C:
 			a.checkNotifications()
 			// Also update tray state periodically
-			glib.IdleAdd(func() {
-				a.updateTrayState()
-			})
+			a.scheduleUIUpdate()
 		case <-a.ctx.Done():
 			return
 		}

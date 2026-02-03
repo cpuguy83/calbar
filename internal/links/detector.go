@@ -4,6 +4,7 @@ package links
 import (
 	"os/exec"
 	"regexp"
+	"strings"
 )
 
 // Meeting link patterns for various services
@@ -103,4 +104,101 @@ func Service(url string) string {
 	default:
 		return "Meeting"
 	}
+}
+
+// Link represents a detected URL with a display label.
+type Link struct {
+	URL   string
+	Label string
+}
+
+// DetectAll returns all URLs found in the event fields.
+// Meeting URLs are returned first with service-specific labels,
+// followed by other URLs with domain-based labels.
+func DetectAll(location, description, url string) []Link {
+	seen := make(map[string]bool)
+	var result []Link
+
+	// Helper to add a link if not already seen
+	addLink := func(u, label string) {
+		if u == "" || seen[u] {
+			return
+		}
+		seen[u] = true
+		result = append(result, Link{URL: u, Label: label})
+	}
+
+	// Check explicit URL field first (if it's a meeting link)
+	if url != "" {
+		for i, pattern := range patterns {
+			if i == len(patterns)-1 {
+				continue // Skip generic pattern
+			}
+			if pattern.MatchString(url) {
+				addLink(url, "Join "+Service(url)+" Meeting")
+				break
+			}
+		}
+	}
+
+	// Find all meeting links in location and description
+	for _, text := range []string{location, description} {
+		if text == "" {
+			continue
+		}
+		// Check each specific meeting pattern
+		for i, pattern := range patterns {
+			if i == len(patterns)-1 {
+				continue // Skip generic pattern for now
+			}
+			matches := pattern.FindAllString(text, -1)
+			for _, match := range matches {
+				addLink(match, "Join "+Service(match)+" Meeting")
+			}
+		}
+	}
+
+	// Now find all other URLs (generic pattern)
+	genericPattern := patterns[len(patterns)-1]
+	for _, text := range []string{location, description} {
+		if text == "" {
+			continue
+		}
+		matches := genericPattern.FindAllString(text, -1)
+		for _, match := range matches {
+			if seen[match] {
+				continue
+			}
+			// Extract domain for label
+			label := extractDomain(match)
+			addLink(match, label)
+		}
+	}
+
+	// Add explicit URL if not a meeting link and not already added
+	if url != "" && !seen[url] {
+		addLink(url, extractDomain(url))
+	}
+
+	return result
+}
+
+// extractDomain extracts the domain from a URL for use as a label.
+func extractDomain(u string) string {
+	// Remove protocol
+	domain := u
+	if idx := strings.Index(domain, "://"); idx != -1 {
+		domain = domain[idx+3:]
+	}
+	// Remove path
+	if idx := strings.Index(domain, "/"); idx != -1 {
+		domain = domain[:idx]
+	}
+	// Remove port
+	if idx := strings.Index(domain, ":"); idx != -1 {
+		domain = domain[:idx]
+	}
+	// Remove www. prefix
+	domain = strings.TrimPrefix(domain, "www.")
+	return domain
 }
