@@ -79,7 +79,7 @@ func (s *MS365Source) Name() string {
 }
 
 // Fetch retrieves events from Microsoft 365 calendar.
-func (s *MS365Source) Fetch(ctx context.Context) ([]Event, error) {
+func (s *MS365Source) Fetch(ctx context.Context, end time.Time) ([]Event, error) {
 	// Initialize auth on first fetch
 	if err := s.initAuth(ctx); err != nil {
 		return nil, err
@@ -92,12 +92,10 @@ func (s *MS365Source) Fetch(ctx context.Context) ([]Event, error) {
 	}
 
 	// Fetch events from Graph API
-	// Get events from now to 1 year ahead
+	// Get events from now until the specified end time
 	now := time.Now()
-	startTime := now.AddDate(0, 0, -7) // Include a week of past events for context
-	endTime := now.AddDate(1, 0, 0)
 
-	events, err := s.fetchCalendarView(ctx, token.AccessToken, startTime, endTime)
+	events, err := s.fetchCalendarView(ctx, token.AccessToken, now, end)
 	if err != nil {
 		return nil, fmt.Errorf("fetch calendar: %w", err)
 	}

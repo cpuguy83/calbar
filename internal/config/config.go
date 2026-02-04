@@ -23,8 +23,9 @@ type Config struct {
 
 // SyncConfig configures the sync daemon.
 type SyncConfig struct {
-	Interval time.Duration `yaml:"interval"`
-	Output   string        `yaml:"output"`
+	Interval  time.Duration `yaml:"interval"`
+	Output    string        `yaml:"output"`
+	TimeRange time.Duration `yaml:"time_range"` // How far ahead to fetch events (default: 14 days)
 }
 
 // SourceConfig configures a calendar source.
@@ -123,6 +124,9 @@ func (c *Config) applyDefaults() {
 	if c.Sync.Interval == 0 {
 		c.Sync.Interval = 5 * time.Minute
 	}
+	if c.Sync.TimeRange == 0 {
+		c.Sync.TimeRange = 14 * 24 * time.Hour // Default: 14 days
+	}
 	if c.Sync.Output == "" {
 		dataDir, _ := os.UserHomeDir()
 		c.Sync.Output = filepath.Join(dataDir, ".local", "share", "calbar", "calendar.ics")
@@ -166,6 +170,45 @@ func (s *SourceConfig) GetPassword() (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// parseDuration parses a duration string with support for days (d) and weeks (w).
+// Examples: "14d" (14 days), "2w" (2 weeks), "5m" (5 minutes), "1h" (1 hour).
+// Falls back to time.ParseDuration for standard Go duration formats.
+func parseDuration(s string) (time.Duration, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, nil
+	}
+
+	// Check for days suffix
+	if strings.HasSuffix(s, "d") {
+		numStr := strings.TrimSuffix(s, "d")
+		var days int
+		if _, err := fmt.Sscanf(numStr, "%d", &days); err != nil {
+			return 0, fmt.Errorf("invalid duration %q: %w", s, err)
+		}
+		if days < 0 {
+			return 0, fmt.Errorf("invalid duration %q: negative values not allowed", s)
+		}
+		return time.Duration(days) * 24 * time.Hour, nil
+	}
+
+	// Check for weeks suffix
+	if strings.HasSuffix(s, "w") {
+		numStr := strings.TrimSuffix(s, "w")
+		var weeks int
+		if _, err := fmt.Sscanf(numStr, "%d", &weeks); err != nil {
+			return 0, fmt.Errorf("invalid duration %q: %w", s, err)
+		}
+		if weeks < 0 {
+			return 0, fmt.Errorf("invalid duration %q: negative values not allowed", s)
+		}
+		return time.Duration(weeks) * 7 * 24 * time.Hour, nil
+	}
+
+	// Fall back to standard Go duration parsing
+	return time.ParseDuration(s)
+}
+
 // expandPath expands ~ to the user's home directory.
 func expandPath(path string) string {
 	if strings.HasPrefix(path, "~/") {
@@ -181,19 +224,27 @@ func expandPath(path string) string {
 // UnmarshalYAML implements custom unmarshaling for duration fields.
 func (c *SyncConfig) UnmarshalYAML(node *yaml.Node) error {
 	var raw struct {
-		Interval string `yaml:"interval"`
-		Output   string `yaml:"output"`
+		Interval  string `yaml:"interval"`
+		Output    string `yaml:"output"`
+		TimeRange string `yaml:"time_range"`
 	}
 	if err := node.Decode(&raw); err != nil {
 		return err
 	}
 
 	if raw.Interval != "" {
-		d, err := time.ParseDuration(raw.Interval)
+		d, err := parseDuration(raw.Interval)
 		if err != nil {
 			return fmt.Errorf("parse interval: %w", err)
 		}
 		c.Interval = d
+	}
+	if raw.TimeRange != "" {
+		d, err := parseDuration(raw.TimeRange)
+		if err != nil {
+			return fmt.Errorf("parse time_range: %w", err)
+		}
+		c.TimeRange = d
 	}
 	c.Output = raw.Output
 	return nil

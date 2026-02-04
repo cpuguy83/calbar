@@ -10,6 +10,11 @@ sync:
   # How often to refresh calendar feeds
   interval: 5m
 
+  # How far ahead to fetch events from calendar sources
+  # Supports: days (14d), weeks (2w), or standard Go durations (336h)
+  # Default: 14d
+  time_range: 14d
+
 # -----------------------------------------------------------------------------
 # Calendar Sources
 # -----------------------------------------------------------------------------

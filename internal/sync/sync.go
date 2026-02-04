@@ -20,8 +20,9 @@ type sourceWithFilter struct {
 
 // Syncer handles calendar synchronization from multiple sources.
 type Syncer struct {
-	sources  []sourceWithFilter
-	interval time.Duration
+	sources   []sourceWithFilter
+	interval  time.Duration
+	timeRange time.Duration
 }
 
 // NewSyncer creates a new Syncer from configuration.
@@ -32,8 +33,9 @@ func NewSyncer(cfg *config.Config) (*Syncer, error) {
 	}
 
 	return &Syncer{
-		sources:  sources,
-		interval: cfg.Sync.Interval,
+		sources:   sources,
+		interval:  cfg.Sync.Interval,
+		timeRange: cfg.Sync.TimeRange,
 	}, nil
 }
 
@@ -50,6 +52,9 @@ func (s *Syncer) SourceCount() int {
 // Sync fetches all sources, applies per-source filters, and returns merged events.
 func (s *Syncer) Sync(ctx context.Context) ([]calendar.Event, error) {
 	slog.Info("starting sync", "sources", len(s.sources))
+
+	// Calculate end time from configured time range
+	endTime := time.Now().Add(s.timeRange)
 
 	// Fetch from all sources in parallel, applying per-source filters
 	type result struct {
@@ -68,7 +73,7 @@ func (s *Syncer) Sync(ctx context.Context) ([]calendar.Event, error) {
 			name := swf.source.Name()
 			slog.Debug("fetching source", "name", name)
 
-			events, err := swf.source.Fetch(ctx)
+			events, err := swf.source.Fetch(ctx, endTime)
 			if err != nil {
 				results <- result{name: name, err: err}
 				return

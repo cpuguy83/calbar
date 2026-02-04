@@ -41,8 +41,6 @@
           # Add nogtk build tag when GTK is disabled
           tags = pkgs.lib.optionals gtk.disable [ "nogtk" ];
 
-          doCheck = false; # Tests require D-Bus/GTK
-
           meta = with pkgs.lib; {
             description = "Calendar system tray app for Linux";
             homepage = "https://github.com/cpuguy83/calbar";

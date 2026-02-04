@@ -17,6 +17,7 @@ type ICSSource struct {
 	username string
 	password string
 	client   *http.Client
+	end      time.Time // end of time range for filtering
 }
 
 // NewICSSource creates a new ICS calendar source.
@@ -38,7 +39,9 @@ func (s *ICSSource) Name() string {
 }
 
 // Fetch retrieves events from the ICS feed.
-func (s *ICSSource) Fetch(ctx context.Context) ([]Event, error) {
+func (s *ICSSource) Fetch(ctx context.Context, end time.Time) ([]Event, error) {
+	s.end = end
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
@@ -65,6 +68,7 @@ func (s *ICSSource) Fetch(ctx context.Context) ([]Event, error) {
 // parseICS parses an ICS file and returns events.
 func (s *ICSSource) parseICS(r io.Reader) ([]Event, error) {
 	dec := ics.NewDecoder(r)
+	now := time.Now()
 
 	var events []Event
 
@@ -88,7 +92,13 @@ func (s *ICSSource) parseICS(r io.Reader) ([]Event, error) {
 				continue
 			}
 
-			events = append(events, parsed...)
+			// Filter events to the configured time range (now to end)
+			for _, event := range parsed {
+				// Include events that end after now and start before end
+				if event.End.After(now) && event.Start.Before(s.end) {
+					events = append(events, event)
+				}
+			}
 		}
 	}
 
@@ -96,7 +106,7 @@ func (s *ICSSource) parseICS(r io.Reader) ([]Event, error) {
 }
 
 // parseEvent converts an ICS VEVENT component to our Event type.
-// For recurring events, it expands occurrences within the next year.
+// For recurring events, it expands occurrences within the configured time range.
 func (s *ICSSource) parseEvent(comp *ics.Component) ([]Event, error) {
 	base := Event{
 		Source: s.name,
@@ -195,10 +205,10 @@ func (s *ICSSource) parseEvent(comp *ics.Component) ([]Event, error) {
 	}
 
 	// Recurring event - expand occurrences
-	// Look from 30 days ago to 1 year ahead
+	// Look from now to the configured end time
 	now := time.Now()
-	rangeStart := now.AddDate(0, 0, -30)
-	rangeEnd := now.AddDate(1, 0, 0)
+	rangeStart := now
+	rangeEnd := s.end
 
 	occurrences := rset.Between(rangeStart, rangeEnd, true)
 

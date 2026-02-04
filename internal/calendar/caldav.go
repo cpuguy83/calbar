@@ -52,7 +52,7 @@ func (s *CalDAVSource) Name() string {
 }
 
 // Fetch retrieves events from the CalDAV server.
-func (s *CalDAVSource) Fetch(ctx context.Context) ([]Event, error) {
+func (s *CalDAVSource) Fetch(ctx context.Context, end time.Time) ([]Event, error) {
 	// Create HTTP client with basic auth
 	httpClient := &http.Client{
 		Timeout: 60 * time.Second,
@@ -94,7 +94,7 @@ func (s *CalDAVSource) Fetch(ctx context.Context) ([]Event, error) {
 			continue
 		}
 
-		events, err := s.fetchCalendarEvents(ctx, client, cal)
+		events, err := s.fetchCalendarEvents(ctx, client, cal, end)
 		if err != nil {
 			// Log but continue with other calendars
 			continue
@@ -117,11 +117,9 @@ func (s *CalDAVSource) shouldSyncCalendar(name string) bool {
 }
 
 // fetchCalendarEvents fetches events from a single calendar.
-func (s *CalDAVSource) fetchCalendarEvents(ctx context.Context, client *caldav.Client, cal caldav.Calendar) ([]Event, error) {
-	// Query for events in a reasonable time range
+func (s *CalDAVSource) fetchCalendarEvents(ctx context.Context, client *caldav.Client, cal caldav.Calendar, end time.Time) ([]Event, error) {
+	// Query for events from now to the configured end time
 	now := time.Now()
-	start := now.Add(-7 * 24 * time.Hour) // 1 week ago
-	end := now.Add(90 * 24 * time.Hour)   // 90 days ahead
 
 	query := &caldav.CalendarQuery{
 		CompRequest: caldav.CalendarCompRequest{
@@ -145,7 +143,7 @@ func (s *CalDAVSource) fetchCalendarEvents(ctx context.Context, client *caldav.C
 			Name: "VCALENDAR",
 			Comps: []caldav.CompFilter{{
 				Name:  "VEVENT",
-				Start: start,
+				Start: now,
 				End:   end,
 			}},
 		},

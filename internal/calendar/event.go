@@ -66,6 +66,6 @@ type Source interface {
 	Name() string
 
 	// Fetch retrieves events from the calendar source.
-	// The returned events should be within a reasonable time range (e.g., next 30 days).
-	Fetch(ctx context.Context) ([]Event, error)
+	// Events should be fetched from now until the specified end time.
+	Fetch(ctx context.Context, end time.Time) ([]Event, error)
 }
