@@ -12,13 +12,15 @@ import (
 	"time"
 
 	"github.com/cpuguy83/calbar/internal/calendar"
+	"github.com/cpuguy83/calbar/internal/gtk4layershell"
 	"github.com/cpuguy83/calbar/internal/links"
 
-	"github.com/diamondburned/gotk4-adwaita/pkg/adw"
-	"github.com/diamondburned/gotk4-layer-shell/pkg/gtk4layershell"
-	"github.com/diamondburned/gotk4/pkg/gdk/v4"
-	"github.com/diamondburned/gotk4/pkg/glib/v2"
-	"github.com/diamondburned/gotk4/pkg/gtk/v4"
+	"github.com/jwijenbergh/puregotk/v4/adw"
+	"github.com/jwijenbergh/puregotk/v4/gdk"
+	"github.com/jwijenbergh/puregotk/v4/glib"
+	"github.com/jwijenbergh/puregotk/v4/gobject"
+	"github.com/jwijenbergh/puregotk/v4/gtk"
+	"github.com/jwijenbergh/puregotk/v4/pango"
 )
 
 // Popup is the main popup window showing upcoming events.
@@ -44,7 +46,7 @@ type Popup struct {
 	pointerInside bool
 	noAutoDismiss bool
 
-	dismissTimer glib.SourceHandle
+	dismissTimer uint
 	onJoin       func(url string)
 }
 
@@ -69,19 +71,21 @@ func (p *Popup) Init() {
 	// Layer shell setup for Wayland compositors
 	if gtk4layershell.IsSupported() {
 		slog.Debug("layer shell supported")
-		gtk4layershell.InitForWindow(p.window)
-		gtk4layershell.SetLayer(p.window, gtk4layershell.LayerShellLayerTop)
-		gtk4layershell.SetAnchor(p.window, gtk4layershell.LayerShellEdgeTop, true)
-		gtk4layershell.SetAnchor(p.window, gtk4layershell.LayerShellEdgeRight, true)
-		gtk4layershell.SetMargin(p.window, gtk4layershell.LayerShellEdgeTop, 8)
-		gtk4layershell.SetMargin(p.window, gtk4layershell.LayerShellEdgeRight, 8)
-		gtk4layershell.SetKeyboardMode(p.window, gtk4layershell.LayerShellKeyboardModeOnDemand)
-		gtk4layershell.SetNamespace(p.window, "calbar-popup")
+		winPtr := p.window.GoPointer()
+		gtk4layershell.InitForWindow(winPtr)
+		gtk4layershell.SetLayer(winPtr, gtk4layershell.LayerTop)
+		gtk4layershell.SetAnchor(winPtr, gtk4layershell.EdgeTop, true)
+		gtk4layershell.SetAnchor(winPtr, gtk4layershell.EdgeRight, true)
+		gtk4layershell.SetMargin(winPtr, gtk4layershell.EdgeTop, 8)
+		gtk4layershell.SetMargin(winPtr, gtk4layershell.EdgeRight, 8)
+		gtk4layershell.SetKeyboardMode(winPtr, gtk4layershell.KeyboardModeOnDemand)
+		gtk4layershell.SetNamespace(winPtr, "calbar-popup")
 		p.window.SetDecorated(false)
 
 		// Auto-dismiss on focus loss (unless disabled)
 		if !p.noAutoDismiss {
-			p.window.NotifyProperty("is-active", func() {
+			// Connect to notify::is-active signal
+			notifyCb := func(obj gobject.Object, pspec uintptr) {
 				if p.window.IsVisible() {
 					if p.window.IsActive() {
 						if p.dismissTimer != 0 {
@@ -99,11 +103,12 @@ func (p *Popup) Init() {
 						}
 					}
 				}
-			})
+			}
+			p.window.ConnectNotify(&notifyCb)
 
 			// Track pointer enter/leave for smart dismiss behavior
 			motionController := gtk.NewEventControllerMotion()
-			motionController.ConnectEnter(func(x, y float64) {
+			enterCb := func(ctrl gtk.EventControllerMotion, x, y float64) {
 				slog.Debug("pointer entered popup", "x", x, "y", y)
 				p.mu.Lock()
 				p.pointerInside = true
@@ -113,8 +118,8 @@ func (p *Popup) Init() {
 					glib.SourceRemove(p.dismissTimer)
 					p.dismissTimer = 0
 				}
-			})
-			motionController.ConnectLeave(func() {
+			}
+			leaveCb := func(ctrl gtk.EventControllerMotion) {
 				slog.Debug("pointer left popup")
 				p.mu.Lock()
 				p.pointerInside = false
@@ -123,23 +128,26 @@ func (p *Popup) Init() {
 				if p.window.IsVisible() && !p.window.IsActive() {
 					p.startDismissTimer()
 				}
-			})
-			p.window.AddController(motionController)
+			}
+			motionController.ConnectEnter(&enterCb)
+			motionController.ConnectLeave(&leaveCb)
+			p.window.AddController(&motionController.EventController)
 		}
 	}
 
 	// Hide on close request
-	p.window.ConnectCloseRequest(func() bool {
+	closeRequestCb := func(w gtk.Window) bool {
 		p.window.SetVisible(false)
 		return true
-	})
+	}
+	p.window.ConnectCloseRequest(&closeRequestCb)
 
 	// Escape to close (or go back from details)
 	keyController := gtk.NewEventControllerKey()
-	keyController.ConnectKeyPressed(func(keyval, keycode uint, state gdk.ModifierType) bool {
-		if keyval == gdk.KEY_Escape {
+	keyPressedCb := func(ctrl gtk.EventControllerKey, keyval, keycode uint, state gdk.ModifierType) bool {
+		if keyval == uint(gdk.KEY_Escape) {
 			// If showing details, go back to list
-			if p.stack != nil && p.stack.VisibleChildName() == "details" {
+			if p.stack != nil && p.stack.GetVisibleChildName() == "details" {
 				p.hideDetails()
 				return true
 			}
@@ -147,8 +155,9 @@ func (p *Popup) Init() {
 			return true
 		}
 		return false
-	})
-	p.window.AddController(keyController)
+	}
+	keyController.ConnectKeyPressed(&keyPressedCb)
+	p.window.AddController(&keyController.EventController)
 
 	// Build UI
 	p.buildUI()
@@ -159,71 +168,71 @@ func (p *Popup) Init() {
 // buildUI constructs the widget hierarchy.
 func (p *Popup) buildUI() {
 	// Main container
-	p.content = gtk.NewBox(gtk.OrientationVertical, 0)
-	p.content.AddCSSClass("popup-container")
-	p.window.SetChild(p.content)
+	p.content = gtk.NewBox(gtk.OrientationVerticalValue, 0)
+	p.content.AddCssClass("popup-container")
+	p.window.SetChild(&p.content.Widget)
 
 	// Stack for switching between list and details views
 	p.stack = gtk.NewStack()
-	p.stack.SetTransitionType(gtk.StackTransitionTypeSlideLeftRight)
+	p.stack.SetTransitionType(gtk.StackTransitionTypeSlideLeftRightValue)
 	p.stack.SetTransitionDuration(200)
-	p.stack.SetVExpand(true)
-	p.content.Append(p.stack)
+	p.stack.SetVexpand(true)
+	p.content.Append(&p.stack.Widget)
 
 	// List view (contains header, scroll, and all-day section)
-	p.listView = gtk.NewBox(gtk.OrientationVertical, 0)
-	p.stack.AddNamed(p.listView, "list")
+	p.listView = gtk.NewBox(gtk.OrientationVerticalValue, 0)
+	p.stack.AddNamed(&p.listView.Widget, "list")
 
 	// Header
 	header := p.buildHeader()
-	p.listView.Append(header)
+	p.listView.Append(&header.Widget)
 
 	// Scrolled event list
 	scrolled := gtk.NewScrolledWindow()
-	scrolled.SetVExpand(true)
-	scrolled.SetPolicy(gtk.PolicyNever, gtk.PolicyAutomatic)
-	scrolled.AddCSSClass("event-scroll")
-	p.listView.Append(scrolled)
+	scrolled.SetVexpand(true)
+	scrolled.SetPolicy(gtk.PolicyNeverValue, gtk.PolicyAutomaticValue)
+	scrolled.AddCssClass("event-scroll")
+	p.listView.Append(&scrolled.Widget)
 
 	p.listBox = gtk.NewListBox()
-	p.listBox.SetSelectionMode(gtk.SelectionNone)
-	p.listBox.AddCSSClass("event-list")
-	scrolled.SetChild(p.listBox)
+	p.listBox.SetSelectionMode(gtk.SelectionNoneValue)
+	p.listBox.AddCssClass("event-list")
+	scrolled.SetChild(&p.listBox.Widget)
 
 	// All-day section (fixed at bottom, outside scroll)
-	p.allDaySection = gtk.NewBox(gtk.OrientationVertical, 0)
-	p.allDaySection.AddCSSClass("all-day-section")
+	p.allDaySection = gtk.NewBox(gtk.OrientationVerticalValue, 0)
+	p.allDaySection.AddCssClass("all-day-section")
 	p.allDaySection.SetVisible(false) // Hidden until populated
-	p.listView.Append(p.allDaySection)
+	p.listView.Append(&p.allDaySection.Widget)
 
 	// Details view
-	p.detailsView = gtk.NewBox(gtk.OrientationVertical, 0)
-	p.stack.AddNamed(p.detailsView, "details")
+	p.detailsView = gtk.NewBox(gtk.OrientationVerticalValue, 0)
+	p.stack.AddNamed(&p.detailsView.Widget, "details")
 
 	// Status bar (always visible at bottom, outside stack)
 	p.statusBar = gtk.NewLabel("")
-	p.statusBar.AddCSSClass("status-bar")
-	p.statusBar.SetXAlign(0)
-	p.content.Append(p.statusBar)
+	p.statusBar.AddCssClass("status-bar")
+	p.statusBar.SetXalign(0)
+	p.content.Append(&p.statusBar.Widget)
 }
 
 // buildHeader creates the header section.
 func (p *Popup) buildHeader() *gtk.Box {
-	header := gtk.NewBox(gtk.OrientationHorizontal, 0)
-	header.AddCSSClass("popup-header")
+	header := gtk.NewBox(gtk.OrientationHorizontalValue, 0)
+	header.AddCssClass("popup-header")
 
 	// Calendar icon
 	icon := gtk.NewImageFromIconName("x-office-calendar-symbolic")
-	icon.AddCSSClass("header-icon")
+	icon.AddCssClass("header-icon")
 	icon.SetPixelSize(20)
-	header.Append(icon)
+	header.Append(&icon.Widget)
 
 	// Title
 	title := gtk.NewLabel("Upcoming Events")
-	title.AddCSSClass("header-title")
-	title.SetHExpand(true)
-	title.SetXAlign(0)
-	header.Append(title)
+	title.AddCssClass("header-title")
+	title.SetHexpand(true)
+	title.SetXalign(0)
+	header.Append(&title.Widget)
 
 	return header
 }
@@ -532,11 +541,11 @@ func (p *Popup) applyCSS() {
 		}
 	`
 
-	provider := gtk.NewCSSProvider()
-	provider.LoadFromData(css)
+	provider := gtk.NewCssProvider()
+	provider.LoadFromString(css)
 
 	if display := gdk.DisplayGetDefault(); display != nil {
-		gtk.StyleContextAddProviderForDisplay(display, provider, gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+		gtk.StyleContextAddProviderForDisplay(display, provider, uint(gtk.STYLE_PROVIDER_PRIORITY_APPLICATION))
 	}
 }
 
@@ -545,7 +554,7 @@ func (p *Popup) Show() {
 	if p.window == nil {
 		return
 	}
-	glib.IdleAdd(func() {
+	var cb glib.SourceFunc = func(data uintptr) bool {
 		// Reset to list view when showing
 		if p.stack != nil {
 			p.stack.SetVisibleChildName("list")
@@ -554,7 +563,9 @@ func (p *Popup) Show() {
 		p.updateList()
 		p.window.SetVisible(true)
 		p.window.Present()
-	})
+		return false // Remove idle source
+	}
+	glib.IdleAdd(&cb, 0)
 }
 
 // Hide hides the popup window.
@@ -562,7 +573,11 @@ func (p *Popup) Hide() {
 	if p.window == nil {
 		return
 	}
-	glib.IdleAdd(p.hideAll)
+	var cb glib.SourceFunc = func(data uintptr) bool {
+		p.hideAll()
+		return false
+	}
+	glib.IdleAdd(&cb, 0)
 }
 
 func (p *Popup) hideAll() {
@@ -578,7 +593,7 @@ func (p *Popup) startDismissTimer() {
 	if p.dismissTimer != 0 {
 		return
 	}
-	p.dismissTimer = glib.TimeoutAdd(300, func() bool {
+	var cb glib.SourceFunc = func(data uintptr) bool {
 		p.mu.RLock()
 		pointerInside := p.pointerInside
 		p.mu.RUnlock()
@@ -588,7 +603,8 @@ func (p *Popup) startDismissTimer() {
 		}
 		p.dismissTimer = 0
 		return false
-	})
+	}
+	p.dismissTimer = glib.TimeoutAdd(300, &cb, 0)
 }
 
 // Toggle shows or hides the popup.
@@ -596,7 +612,7 @@ func (p *Popup) Toggle() {
 	if p.window == nil {
 		return
 	}
-	glib.IdleAdd(func() {
+	var cb glib.SourceFunc = func(data uintptr) bool {
 		if p.window.IsVisible() {
 			p.hideAll()
 		} else {
@@ -609,7 +625,9 @@ func (p *Popup) Toggle() {
 			p.window.SetVisible(true)
 			p.window.Present()
 		}
-	})
+		return false
+	}
+	glib.IdleAdd(&cb, 0)
 }
 
 // SetEvents updates the event list.
@@ -621,7 +639,11 @@ func (p *Popup) SetEvents(events []calendar.Event) {
 	p.loading = false
 	p.mu.Unlock()
 
-	glib.IdleAdd(p.updateList)
+	var cb glib.SourceFunc = func(data uintptr) bool {
+		p.updateList()
+		return false
+	}
+	glib.IdleAdd(&cb, 0)
 }
 
 // SetStale marks the data as potentially stale.
@@ -630,7 +652,11 @@ func (p *Popup) SetStale(stale bool) {
 	p.stale = stale
 	p.mu.Unlock()
 
-	glib.IdleAdd(p.updateStatusBar)
+	var cb glib.SourceFunc = func(data uintptr) bool {
+		p.updateStatusBar()
+		return false
+	}
+	glib.IdleAdd(&cb, 0)
 }
 
 // OnJoin sets the callback for when a join button is clicked.
@@ -645,12 +671,12 @@ func (p *Popup) updateList() {
 	}
 
 	// Clear existing timed events
-	for child := p.listBox.FirstChild(); child != nil; child = p.listBox.FirstChild() {
+	for child := p.listBox.GetFirstChild(); child != nil; child = p.listBox.GetFirstChild() {
 		p.listBox.Remove(child)
 	}
 
 	// Clear existing all-day events
-	for child := p.allDaySection.FirstChild(); child != nil; child = p.allDaySection.FirstChild() {
+	for child := p.allDaySection.GetFirstChild(); child != nil; child = p.allDaySection.GetFirstChild() {
 		p.allDaySection.Remove(child)
 	}
 	p.allDaySection.SetVisible(false)
@@ -728,66 +754,66 @@ func (p *Popup) updateList() {
 
 // showLoadingState displays the loading indicator.
 func (p *Popup) showLoadingState() {
-	box := gtk.NewBox(gtk.OrientationVertical, 0)
-	box.AddCSSClass("loading-state")
-	box.SetHAlign(gtk.AlignCenter)
-	box.SetVAlign(gtk.AlignCenter)
-	box.SetVExpand(true)
+	box := gtk.NewBox(gtk.OrientationVerticalValue, 0)
+	box.AddCssClass("loading-state")
+	box.SetHalign(gtk.AlignCenterValue)
+	box.SetValign(gtk.AlignCenterValue)
+	box.SetVexpand(true)
 
 	spinner := gtk.NewSpinner()
 	spinner.SetSizeRequest(32, 32)
 	spinner.Start()
-	box.Append(spinner)
+	box.Append(&spinner.Widget)
 
 	label := gtk.NewLabel("Loading calendars...")
-	label.AddCSSClass("loading-text")
-	box.Append(label)
+	label.AddCssClass("loading-text")
+	box.Append(&label.Widget)
 
-	p.listBox.Append(box)
+	p.listBox.Append(&box.Widget)
 }
 
 // showEmptyState displays the empty state.
 func (p *Popup) showEmptyState() {
-	box := gtk.NewBox(gtk.OrientationVertical, 0)
-	box.AddCSSClass("empty-state")
-	box.SetHAlign(gtk.AlignCenter)
-	box.SetVAlign(gtk.AlignCenter)
-	box.SetVExpand(true)
+	box := gtk.NewBox(gtk.OrientationVerticalValue, 0)
+	box.AddCssClass("empty-state")
+	box.SetHalign(gtk.AlignCenterValue)
+	box.SetValign(gtk.AlignCenterValue)
+	box.SetVexpand(true)
 
 	icon := gtk.NewImageFromIconName("weather-clear-symbolic")
-	icon.AddCSSClass("empty-icon")
+	icon.AddCssClass("empty-icon")
 	icon.SetPixelSize(48)
-	box.Append(icon)
+	box.Append(&icon.Widget)
 
 	title := gtk.NewLabel("All Clear")
-	title.AddCSSClass("empty-title")
-	box.Append(title)
+	title.AddCssClass("empty-title")
+	box.Append(&title.Widget)
 
 	subtitle := gtk.NewLabel("No upcoming events")
-	subtitle.AddCSSClass("empty-subtitle")
-	box.Append(subtitle)
+	subtitle.AddCssClass("empty-subtitle")
+	box.Append(&subtitle.Widget)
 
-	p.listBox.Append(box)
+	p.listBox.Append(&box.Widget)
 }
 
 // showNoTimedEventsState displays a minimal state when only all-day events exist.
 func (p *Popup) showNoTimedEventsState() {
-	box := gtk.NewBox(gtk.OrientationVertical, 0)
-	box.AddCSSClass("empty-state")
-	box.SetHAlign(gtk.AlignCenter)
-	box.SetVAlign(gtk.AlignCenter)
-	box.SetVExpand(true)
+	box := gtk.NewBox(gtk.OrientationVerticalValue, 0)
+	box.AddCssClass("empty-state")
+	box.SetHalign(gtk.AlignCenterValue)
+	box.SetValign(gtk.AlignCenterValue)
+	box.SetVexpand(true)
 
 	icon := gtk.NewImageFromIconName("weather-clear-symbolic")
-	icon.AddCSSClass("empty-icon")
+	icon.AddCssClass("empty-icon")
 	icon.SetPixelSize(32)
-	box.Append(icon)
+	box.Append(&icon.Widget)
 
 	subtitle := gtk.NewLabel("No timed events today")
-	subtitle.AddCSSClass("empty-subtitle")
-	box.Append(subtitle)
+	subtitle.AddCssClass("empty-subtitle")
+	box.Append(&subtitle.Widget)
 
-	p.listBox.Append(box)
+	p.listBox.Append(&box.Widget)
 }
 
 // populateTimedEvents adds timed event rows grouped by day.
@@ -799,14 +825,14 @@ func (p *Popup) populateTimedEvents(events []calendar.Event, now time.Time) {
 		day := p.getDayLabel(event.Start, now)
 		if day != lastDay {
 			sep := gtk.NewLabel(day)
-			sep.AddCSSClass("day-separator")
-			sep.SetXAlign(0)
-			p.listBox.Append(sep)
+			sep.AddCssClass("day-separator")
+			sep.SetXalign(0)
+			p.listBox.Append(&sep.Widget)
 			lastDay = day
 		}
 
 		row := p.createTimedEventRow(event, now)
-		p.listBox.Append(row)
+		p.listBox.Append(&row.Widget)
 	}
 }
 
@@ -814,14 +840,14 @@ func (p *Popup) populateTimedEvents(events []calendar.Event, now time.Time) {
 func (p *Popup) populateAllDayEvents(events []calendar.Event, now time.Time) {
 	// Header
 	header := gtk.NewLabel("All Day")
-	header.AddCSSClass("all-day-header")
-	header.SetXAlign(0)
-	p.allDaySection.Append(header)
+	header.AddCssClass("all-day-header")
+	header.SetXalign(0)
+	p.allDaySection.Append(&header.Widget)
 
 	// Event rows
 	for _, event := range events {
 		row := p.createAllDayEventRow(event, now)
-		p.allDaySection.Append(row)
+		p.allDaySection.Append(&row.Widget)
 	}
 
 	p.allDaySection.SetVisible(true)
@@ -848,60 +874,61 @@ func (p *Popup) getDayLabel(t time.Time, now time.Time) string {
 
 // createTimedEventRow creates a styled row for a timed event.
 func (p *Popup) createTimedEventRow(event calendar.Event, now time.Time) *gtk.Box {
-	row := gtk.NewBox(gtk.OrientationHorizontal, 0)
-	row.AddCSSClass("event-card")
+	row := gtk.NewBox(gtk.OrientationHorizontalValue, 0)
+	row.AddCssClass("event-card")
 
 	// Make row clickable to show details
 	clickGesture := gtk.NewGestureClick()
 	eventCopy := event // Capture for closure
-	clickGesture.ConnectReleased(func(nPress int, x, y float64) {
+	clickCb := func(gesture gtk.GestureClick, nPress int, x, y float64) {
 		p.showDetails(eventCopy)
-	})
-	row.AddController(clickGesture)
+	}
+	clickGesture.ConnectReleased(&clickCb)
+	row.AddController(&clickGesture.EventController)
 
 	// Time indicator
 	timeBox := p.createTimeIndicator(event, now)
-	row.Append(timeBox)
+	row.Append(&timeBox.Widget)
 
 	// Event details
-	details := gtk.NewBox(gtk.OrientationVertical, 0)
-	details.AddCSSClass("event-details")
-	details.SetHExpand(true)
-	row.Append(details)
+	details := gtk.NewBox(gtk.OrientationVerticalValue, 0)
+	details.AddCssClass("event-details")
+	details.SetHexpand(true)
+	row.Append(&details.Widget)
 
 	// Title
 	title := gtk.NewLabel(event.Summary)
-	title.AddCSSClass("event-title")
-	title.SetXAlign(0)
-	title.SetEllipsize(3) // PANGO_ELLIPSIZE_END
+	title.AddCssClass("event-title")
+	title.SetXalign(0)
+	title.SetEllipsize(pango.EllipsizeEndValue)
 	title.SetMaxWidthChars(35)
 	if event.IsOngoing(now) {
-		title.AddCSSClass("ongoing")
+		title.AddCssClass("ongoing")
 	}
-	details.Append(title)
+	details.Append(&title.Widget)
 
 	// Meta info (duration)
 	meta := p.getEventDuration(event)
 	if meta != "" {
 		metaLabel := gtk.NewLabel(meta)
-		metaLabel.AddCSSClass("event-meta")
-		metaLabel.SetXAlign(0)
-		metaLabel.SetEllipsize(3)
-		details.Append(metaLabel)
+		metaLabel.AddCssClass("event-meta")
+		metaLabel.SetXalign(0)
+		metaLabel.SetEllipsize(pango.EllipsizeEndValue)
+		details.Append(&metaLabel.Widget)
 	}
 
 	// Source
 	if event.Source != "" {
 		source := gtk.NewLabel(event.Source)
-		source.AddCSSClass("event-source")
-		source.SetXAlign(0)
-		details.Append(source)
+		source.AddCssClass("event-source")
+		source.SetXalign(0)
+		details.Append(&source.Widget)
 	}
 
 	// Join button
 	if meetingLink := links.DetectFromEvent(event.Location, event.Description, event.URL); meetingLink != "" {
 		btn := p.createJoinButton(meetingLink)
-		row.Append(btn)
+		row.Append(&btn.Widget)
 	}
 
 	return row
@@ -909,23 +936,24 @@ func (p *Popup) createTimedEventRow(event calendar.Event, now time.Time) *gtk.Bo
 
 // createAllDayEventRow creates a compact row for an all-day event.
 func (p *Popup) createAllDayEventRow(event calendar.Event, now time.Time) *gtk.Box {
-	row := gtk.NewBox(gtk.OrientationVertical, 0)
-	row.AddCSSClass("all-day-row")
+	row := gtk.NewBox(gtk.OrientationVerticalValue, 0)
+	row.AddCssClass("all-day-row")
 
 	// Make row clickable to show details
 	clickGesture := gtk.NewGestureClick()
 	eventCopy := event // Capture for closure
-	clickGesture.ConnectReleased(func(nPress int, x, y float64) {
+	clickCb := func(gesture gtk.GestureClick, nPress int, x, y float64) {
 		p.showDetails(eventCopy)
-	})
-	row.AddController(clickGesture)
+	}
+	clickGesture.ConnectReleased(&clickCb)
+	row.AddController(&clickGesture.EventController)
 
 	// Title
 	title := gtk.NewLabel(event.Summary)
-	title.AddCSSClass("all-day-title")
-	title.SetXAlign(0)
-	title.SetEllipsize(3)
-	row.Append(title)
+	title.AddCssClass("all-day-title")
+	title.SetXalign(0)
+	title.SetEllipsize(pango.EllipsizeEndValue)
+	row.Append(&title.Widget)
 
 	// Meta: date range + source
 	var metaParts []string
@@ -946,9 +974,9 @@ func (p *Popup) createAllDayEventRow(event calendar.Event, now time.Time) *gtk.B
 			metaText += part
 		}
 		meta := gtk.NewLabel(metaText)
-		meta.AddCSSClass("all-day-meta")
-		meta.SetXAlign(0)
-		row.Append(meta)
+		meta.AddCssClass("all-day-meta")
+		meta.SetXalign(0)
+		row.Append(&meta.Widget)
 	}
 
 	return row
@@ -956,9 +984,9 @@ func (p *Popup) createAllDayEventRow(event calendar.Event, now time.Time) *gtk.B
 
 // createTimeIndicator creates the time display on the left.
 func (p *Popup) createTimeIndicator(event calendar.Event, now time.Time) *gtk.Box {
-	box := gtk.NewBox(gtk.OrientationVertical, 0)
-	box.AddCSSClass("time-indicator")
-	box.SetVAlign(gtk.AlignCenter)
+	box := gtk.NewBox(gtk.OrientationVerticalValue, 0)
+	box.AddCssClass("time-indicator")
+	box.SetValign(gtk.AlignCenterValue)
 
 	var primary, secondary string
 
@@ -966,7 +994,7 @@ func (p *Popup) createTimeIndicator(event calendar.Event, now time.Time) *gtk.Bo
 	localStart := event.Start.Local()
 
 	if event.IsOngoing(now) {
-		box.AddCSSClass("now")
+		box.AddCssClass("now")
 		primary = "Now"
 		remaining := event.End.Sub(now)
 		if remaining < time.Hour {
@@ -980,19 +1008,19 @@ func (p *Popup) createTimeIndicator(event calendar.Event, now time.Time) *gtk.Bo
 		secondary = localStart.Format("PM")
 
 		if startsIn <= 15*time.Minute && startsIn > 0 {
-			box.AddCSSClass("imminent")
+			box.AddCssClass("imminent")
 			primary = fmt.Sprintf("%dm", int(startsIn.Minutes()))
 			secondary = "away"
 		}
 	}
 
 	primaryLabel := gtk.NewLabel(primary)
-	primaryLabel.AddCSSClass("time-primary")
-	box.Append(primaryLabel)
+	primaryLabel.AddCssClass("time-primary")
+	box.Append(&primaryLabel.Widget)
 
 	secondaryLabel := gtk.NewLabel(secondary)
-	secondaryLabel.AddCSSClass("time-secondary")
-	box.Append(secondaryLabel)
+	secondaryLabel.AddCssClass("time-secondary")
+	box.Append(&secondaryLabel.Widget)
 
 	return box
 }
@@ -1058,10 +1086,10 @@ func (p *Popup) createJoinButton(meetingLink string) *gtk.Button {
 	service := links.Service(meetingLink)
 
 	btn := gtk.NewButton()
-	btn.AddCSSClass("join-btn")
+	btn.AddCssClass("join-btn")
 
 	// Use icon + label for known services
-	box := gtk.NewBox(gtk.OrientationHorizontal, 4)
+	box := gtk.NewBox(gtk.OrientationHorizontalValue, 4)
 
 	var iconName string
 	switch service {
@@ -1077,14 +1105,14 @@ func (p *Popup) createJoinButton(meetingLink string) *gtk.Button {
 
 	icon := gtk.NewImageFromIconName(iconName)
 	icon.SetPixelSize(14)
-	box.Append(icon)
+	box.Append(&icon.Widget)
 
 	label := gtk.NewLabel("Join")
-	box.Append(label)
+	box.Append(&label.Widget)
 
-	btn.SetChild(box)
+	btn.SetChild(&box.Widget)
 
-	btn.ConnectClicked(func() {
+	clickCb := func(b gtk.Button) {
 		slog.Debug("join clicked", "url", meetingLink)
 		if p.onJoin != nil {
 			p.onJoin(meetingLink)
@@ -1092,7 +1120,8 @@ func (p *Popup) createJoinButton(meetingLink string) *gtk.Button {
 			links.Open(meetingLink)
 		}
 		p.Hide()
-	})
+	}
+	btn.ConnectClicked(&clickCb)
 
 	return btn
 }
@@ -1110,7 +1139,7 @@ func (p *Popup) updateStatusBar() {
 	loading := p.loading
 	p.mu.RUnlock()
 
-	p.statusBar.RemoveCSSClass("stale")
+	p.statusBar.RemoveCssClass("stale")
 
 	var text string
 	switch {
@@ -1118,7 +1147,7 @@ func (p *Popup) updateStatusBar() {
 		text = "Syncing..."
 	case stale:
 		text = fmt.Sprintf("⚠ Data may be stale • Last sync: %s", lastSync.Format("3:04 PM"))
-		p.statusBar.AddCSSClass("stale")
+		p.statusBar.AddCssClass("stale")
 	case lastSync.IsZero():
 		text = "Waiting for sync..."
 	default:
@@ -1133,47 +1162,48 @@ func (p *Popup) showDetails(event calendar.Event) {
 	p.detailsEvent = &event
 
 	// Clear previous details content
-	for child := p.detailsView.FirstChild(); child != nil; child = p.detailsView.FirstChild() {
+	for child := p.detailsView.GetFirstChild(); child != nil; child = p.detailsView.GetFirstChild() {
 		p.detailsView.Remove(child)
 	}
 
 	// Build details header with back button
-	detailsHeader := gtk.NewBox(gtk.OrientationHorizontal, 8)
-	detailsHeader.AddCSSClass("details-header")
+	detailsHeader := gtk.NewBox(gtk.OrientationHorizontalValue, 8)
+	detailsHeader.AddCssClass("details-header")
 
 	backBtn := gtk.NewButton()
 	backBtn.SetIconName("go-previous-symbolic")
-	backBtn.AddCSSClass("details-back-btn")
-	backBtn.ConnectClicked(func() {
+	backBtn.AddCssClass("details-back-btn")
+	backClickCb := func(b gtk.Button) {
 		p.hideDetails()
-	})
-	detailsHeader.Append(backBtn)
+	}
+	backBtn.ConnectClicked(&backClickCb)
+	detailsHeader.Append(&backBtn.Widget)
 
 	headerTitle := gtk.NewLabel("Event Details")
-	headerTitle.AddCSSClass("header-title")
-	headerTitle.SetHExpand(true)
-	headerTitle.SetXAlign(0)
-	detailsHeader.Append(headerTitle)
+	headerTitle.AddCssClass("header-title")
+	headerTitle.SetHexpand(true)
+	headerTitle.SetXalign(0)
+	detailsHeader.Append(&headerTitle.Widget)
 
-	p.detailsView.Append(detailsHeader)
+	p.detailsView.Append(&detailsHeader.Widget)
 
 	// Scrollable content
 	scrolled := gtk.NewScrolledWindow()
-	scrolled.SetVExpand(true)
-	scrolled.SetPolicy(gtk.PolicyNever, gtk.PolicyAutomatic)
-	p.detailsView.Append(scrolled)
+	scrolled.SetVexpand(true)
+	scrolled.SetPolicy(gtk.PolicyNeverValue, gtk.PolicyAutomaticValue)
+	p.detailsView.Append(&scrolled.Widget)
 
-	content := gtk.NewBox(gtk.OrientationVertical, 0)
-	content.AddCSSClass("details-content")
-	scrolled.SetChild(content)
+	content := gtk.NewBox(gtk.OrientationVerticalValue, 0)
+	content.AddCssClass("details-content")
+	scrolled.SetChild(&content.Widget)
 
 	// Event title
 	title := gtk.NewLabel(event.Summary)
-	title.AddCSSClass("details-title")
-	title.SetXAlign(0)
+	title.AddCssClass("details-title")
+	title.SetXalign(0)
 	title.SetWrap(true)
-	title.SetWrapMode(2) // PANGO_WRAP_WORD_CHAR
-	content.Append(title)
+	title.SetWrapMode(pango.WrapWordCharValue)
+	content.Append(&title.Widget)
 
 	// Time and date
 	now := time.Now()
@@ -1212,38 +1242,38 @@ func (p *Popup) showDetails(event calendar.Event) {
 
 	// Description
 	if event.Description != "" {
-		descSection := gtk.NewBox(gtk.OrientationVertical, 4)
-		descSection.AddCSSClass("details-description-section")
+		descSection := gtk.NewBox(gtk.OrientationVerticalValue, 4)
+		descSection.AddCssClass("details-description-section")
 
 		descLabel := gtk.NewLabel("Description")
-		descLabel.AddCSSClass("details-section-label")
-		descLabel.SetXAlign(0)
-		descSection.Append(descLabel)
+		descLabel.AddCssClass("details-section-label")
+		descLabel.SetXalign(0)
+		descSection.Append(&descLabel.Widget)
 
 		// Strip HTML and clean up description
 		cleanDesc := stripHTML(event.Description)
 		descText := gtk.NewLabel(cleanDesc)
-		descText.AddCSSClass("details-description")
-		descText.SetXAlign(0)
+		descText.AddCssClass("details-description")
+		descText.SetXalign(0)
 		descText.SetWrap(true)
-		descText.SetWrapMode(2) // PANGO_WRAP_WORD_CHAR
+		descText.SetWrapMode(pango.WrapWordCharValue)
 		descText.SetSelectable(true)
-		descSection.Append(descText)
+		descSection.Append(&descText.Widget)
 
-		content.Append(descSection)
+		content.Append(&descSection.Widget)
 	}
 
 	// Join button (if meeting link exists)
 	if meetingLink := links.DetectFromEvent(event.Location, event.Description, event.URL); meetingLink != "" {
-		btnBox := gtk.NewBox(gtk.OrientationHorizontal, 0)
-		btnBox.AddCSSClass("details-join-box")
-		btnBox.SetHAlign(gtk.AlignCenter)
+		btnBox := gtk.NewBox(gtk.OrientationHorizontalValue, 0)
+		btnBox.AddCssClass("details-join-box")
+		btnBox.SetHalign(gtk.AlignCenterValue)
 
 		joinBtn := p.createJoinButton(meetingLink)
-		joinBtn.AddCSSClass("details-join-btn")
-		btnBox.Append(joinBtn)
+		joinBtn.AddCssClass("details-join-btn")
+		btnBox.Append(&joinBtn.Widget)
 
-		content.Append(btnBox)
+		content.Append(&btnBox.Widget)
 	}
 
 	// Switch to details view
@@ -1258,22 +1288,22 @@ func (p *Popup) hideDetails() {
 
 // addDetailRow adds a row with icon and text to the details panel.
 func (p *Popup) addDetailRow(container *gtk.Box, icon string, text string) {
-	row := gtk.NewBox(gtk.OrientationHorizontal, 8)
-	row.AddCSSClass("details-row")
+	row := gtk.NewBox(gtk.OrientationHorizontalValue, 8)
+	row.AddCssClass("details-row")
 
 	iconLabel := gtk.NewLabel(icon)
-	iconLabel.AddCSSClass("details-icon")
-	row.Append(iconLabel)
+	iconLabel.AddCssClass("details-icon")
+	row.Append(&iconLabel.Widget)
 
 	textLabel := gtk.NewLabel(text)
-	textLabel.AddCSSClass("details-text")
-	textLabel.SetXAlign(0)
+	textLabel.AddCssClass("details-text")
+	textLabel.SetXalign(0)
 	textLabel.SetWrap(true)
-	textLabel.SetWrapMode(2) // PANGO_WRAP_WORD_CHAR
+	textLabel.SetWrapMode(pango.WrapWordCharValue)
 	textLabel.SetSelectable(true)
-	row.Append(textLabel)
+	row.Append(&textLabel.Widget)
 
-	container.Append(row)
+	container.Append(&row.Widget)
 }
 
 // stripHTML removes HTML tags and converts to readable plain text.

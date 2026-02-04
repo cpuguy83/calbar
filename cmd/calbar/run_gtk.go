@@ -11,9 +11,9 @@ import (
 
 	"github.com/cpuguy83/calbar/internal/ui"
 
-	"github.com/diamondburned/gotk4/pkg/gio/v2"
-	"github.com/diamondburned/gotk4/pkg/glib/v2"
-	"github.com/diamondburned/gotk4/pkg/gtk/v4"
+	"github.com/jwijenbergh/puregotk/v4/gio"
+	"github.com/jwijenbergh/puregotk/v4/glib"
+	"github.com/jwijenbergh/puregotk/v4/gtk"
 )
 
 // Run starts the application with the appropriate main loop.
@@ -30,9 +30,9 @@ func (a *App) Run() error {
 
 // runWithGTK runs the application with GTK main loop.
 func (a *App) runWithGTK() error {
-	gtkApp := gtk.NewApplication("com.github.cpuguy83.calbar", gio.ApplicationFlagsNone)
+	gtkApp := gtk.NewApplication("com.github.cpuguy83.calbar", gio.GApplicationFlagsNoneValue)
 
-	gtkApp.ConnectActivate(func() {
+	activateCb := func(app gio.Application) {
 		// Hold the application open even without visible windows
 		gtkApp.Hold()
 
@@ -40,7 +40,8 @@ func (a *App) runWithGTK() error {
 			slog.Error("activation failed", "error", err)
 			gtkApp.Quit()
 		}
-	})
+	}
+	gtkApp.ConnectActivate(&activateCb)
 
 	// Handle signals to quit GTK gracefully
 	go func() {
@@ -51,13 +52,15 @@ func (a *App) runWithGTK() error {
 		if a.cancel != nil {
 			a.cancel()
 		}
-		glib.IdleAdd(func() {
+		var cb glib.SourceFunc = func(data uintptr) bool {
 			gtkApp.Quit()
-		})
+			return false
+		}
+		glib.IdleAdd(&cb, 0)
 	}()
 
 	// Run GTK main loop (blocks until app.Quit() is called)
-	if code := gtkApp.Run(nil); code != 0 {
+	if code := gtkApp.Run(0, nil); code != 0 {
 		return fmt.Errorf("GTK application exited with code %d", code)
 	}
 
@@ -89,9 +92,11 @@ func (a *App) scheduleUIUpdate() {
 	useGTK := backend == "gtk" || (backend == "auto" || backend == "") && ui.GTKAvailable()
 
 	if useGTK {
-		glib.IdleAdd(func() {
+		var cb glib.SourceFunc = func(data uintptr) bool {
 			a.updateUI()
-		})
+			return false
+		}
+		glib.IdleAdd(&cb, 0)
 	} else {
 		// For menu backend, just update directly
 		a.updateUI()

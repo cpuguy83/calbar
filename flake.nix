@@ -33,7 +33,7 @@
           version = "0.1.0";
           src = ./.;
 
-          vendorHash = "sha256-Rh2Y0TR95gt67uxo7QRFHZq0pwu6BSaniAaD1FuxZ8E=";
+          vendorHash = "sha256-AQsa/bkTHAGpZmiQhwfdPB/bWsiWL4SZzKjjOdJRfIY=";
 
           subPackages = [ "cmd/calbar" ];
 
@@ -42,14 +42,7 @@
 
           doCheck = false; # Tests require D-Bus/GTK
 
-          nativeBuildInputs = pkgs.lib.optionals (!gtk.disable) [ pkgs.pkg-config ];
-          buildInputs = pkgs.lib.optionals (!gtk.disable) [
-            pkgs.gtk4
-            pkgs.gtk4-layer-shell
-            pkgs.libadwaita
-            pkgs.glib
-            pkgs.gobject-introspection
-          ];
+          # GTK libraries are loaded at runtime via dlopen
 
           meta = with pkgs.lib; {
             description = "Calendar system tray app for Linux";

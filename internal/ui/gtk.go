@@ -20,7 +20,12 @@ func NewGTK(cfg Config) *GTK {
 	}
 }
 
-// GTKAvailable returns true if GTK is available in this build.
+// GTKAvailable returns true if GTK is available.
+// For puregotk builds, GTK is always "available" at the code level.
+// If GTK libraries aren't installed, the program will panic on startup
+// with a clear error message from puregotk about missing libraries.
+// Use the 'nogtk' build tag to build without GTK support for systems
+// that don't have GTK4 installed.
 func GTKAvailable() bool {
 	return true
 }
