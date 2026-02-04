@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 
 	"github.com/cpuguy83/calbar/internal/ui"
@@ -15,6 +16,14 @@ import (
 	"github.com/jwijenbergh/puregotk/v4/glib"
 	"github.com/jwijenbergh/puregotk/v4/gtk"
 )
+
+// gtkCallbacks holds stable callback references to avoid exhausting purego callback slots.
+type gtkCallbacks struct {
+	updateUIOnce sync.Once
+	updateUICb   glib.SourceFunc
+}
+
+var callbacks gtkCallbacks
 
 // Run starts the application with the appropriate main loop.
 func (a *App) Run() error {
@@ -85,6 +94,17 @@ func (a *App) runWithoutGTK() error {
 	return nil
 }
 
+// getUpdateUICb returns a stable callback pointer for UI updates.
+func (a *App) getUpdateUICb() *glib.SourceFunc {
+	callbacks.updateUIOnce.Do(func() {
+		callbacks.updateUICb = func(data uintptr) bool {
+			a.updateUI()
+			return false
+		}
+	})
+	return &callbacks.updateUICb
+}
+
 // scheduleUIUpdate schedules a UI update on the appropriate thread.
 func (a *App) scheduleUIUpdate() {
 	// Check if we're using GTK backend
@@ -92,11 +112,7 @@ func (a *App) scheduleUIUpdate() {
 	useGTK := backend == "gtk" || (backend == "auto" || backend == "") && ui.GTKAvailable()
 
 	if useGTK {
-		var cb glib.SourceFunc = func(data uintptr) bool {
-			a.updateUI()
-			return false
-		}
-		glib.IdleAdd(&cb, 0)
+		glib.IdleAdd(a.getUpdateUICb(), 0)
 	} else {
 		// For menu backend, just update directly
 		a.updateUI()

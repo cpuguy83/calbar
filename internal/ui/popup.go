@@ -23,6 +23,23 @@ import (
 	"github.com/jwijenbergh/puregotk/v4/pango"
 )
 
+// stableCallback stores a callback function with sync.Once to ensure it's only
+// initialized once. This is needed because puregotk caches callbacks by pointer
+// address, so we need to return the same pointer each time to avoid exhausting
+// purego's limited callback slots.
+type stableCallback[T any] struct {
+	once sync.Once
+	fn   T
+}
+
+// get returns a pointer to the callback function, initializing it on first call.
+func (s *stableCallback[T]) get(init func() T) *T {
+	s.once.Do(func() {
+		s.fn = init()
+	})
+	return &s.fn
+}
+
 // Popup is the main popup window showing upcoming events.
 type Popup struct {
 	window        *gtk.Window
@@ -48,6 +65,141 @@ type Popup struct {
 
 	dismissTimer uint
 	onJoin       func(url string)
+
+	// Stable callback references to avoid exhausting purego callback slots.
+	eventRowClickCb stableCallback[func(gtk.GestureClick, int, float64, float64)]
+	joinClickCb     stableCallback[func(gtk.Button)]
+	backBtnClickCb  stableCallback[func(gtk.Button)]
+	updateListCb    stableCallback[glib.SourceFunc]
+	updateStatusCb  stableCallback[glib.SourceFunc]
+	showCb          stableCallback[glib.SourceFunc]
+	hideCb          stableCallback[glib.SourceFunc]
+	toggleCb        stableCallback[glib.SourceFunc]
+	dismissTimerCb  stableCallback[glib.SourceFunc]
+
+	// Widget -> data lookup for stable callbacks (accessed only from GTK main thread)
+	widgetEvents map[uintptr]*calendar.Event
+	widgetLinks  map[uintptr]string
+}
+
+// Stable callback getters - these return pointers to the same function each time,
+// allowing puregotk to reuse the same purego callback slot.
+
+func (p *Popup) getEventRowClickCb() *func(gtk.GestureClick, int, float64, float64) {
+	return p.eventRowClickCb.get(func() func(gtk.GestureClick, int, float64, float64) {
+		return func(gesture gtk.GestureClick, nPress int, x, y float64) {
+			widget := gesture.GetWidget()
+			if widget == nil {
+				return
+			}
+			if event, ok := p.widgetEvents[widget.GoPointer()]; ok {
+				p.showDetails(*event)
+			}
+		}
+	})
+}
+
+func (p *Popup) getJoinClickCb() *func(gtk.Button) {
+	return p.joinClickCb.get(func() func(gtk.Button) {
+		return func(btn gtk.Button) {
+			if link, ok := p.widgetLinks[btn.GoPointer()]; ok {
+				slog.Debug("join clicked", "url", link)
+				if p.onJoin != nil {
+					p.onJoin(link)
+				} else {
+					links.Open(link)
+				}
+				p.Hide()
+			}
+		}
+	})
+}
+
+func (p *Popup) getBackBtnClickCb() *func(gtk.Button) {
+	return p.backBtnClickCb.get(func() func(gtk.Button) {
+		return func(btn gtk.Button) {
+			p.hideDetails()
+		}
+	})
+}
+
+func (p *Popup) getUpdateListCb() *glib.SourceFunc {
+	return p.updateListCb.get(func() glib.SourceFunc {
+		return func(data uintptr) bool {
+			p.updateList()
+			return false
+		}
+	})
+}
+
+func (p *Popup) getUpdateStatusCb() *glib.SourceFunc {
+	return p.updateStatusCb.get(func() glib.SourceFunc {
+		return func(data uintptr) bool {
+			p.updateStatusBar()
+			return false
+		}
+	})
+}
+
+func (p *Popup) getShowCb() *glib.SourceFunc {
+	return p.showCb.get(func() glib.SourceFunc {
+		return func(data uintptr) bool {
+			// Reset to list view when showing
+			if p.stack != nil {
+				p.stack.SetVisibleChildName("list")
+			}
+			p.detailsEvent = nil
+			p.updateList()
+			p.window.SetVisible(true)
+			p.window.Present()
+			return false
+		}
+	})
+}
+
+func (p *Popup) getHideCb() *glib.SourceFunc {
+	return p.hideCb.get(func() glib.SourceFunc {
+		return func(data uintptr) bool {
+			p.hideAll()
+			return false
+		}
+	})
+}
+
+func (p *Popup) getToggleCb() *glib.SourceFunc {
+	return p.toggleCb.get(func() glib.SourceFunc {
+		return func(data uintptr) bool {
+			if p.window.IsVisible() {
+				p.hideAll()
+			} else {
+				// Reset to list view when showing
+				if p.stack != nil {
+					p.stack.SetVisibleChildName("list")
+				}
+				p.detailsEvent = nil
+				p.updateList()
+				p.window.SetVisible(true)
+				p.window.Present()
+			}
+			return false
+		}
+	})
+}
+
+func (p *Popup) getDismissTimerCb() *glib.SourceFunc {
+	return p.dismissTimerCb.get(func() glib.SourceFunc {
+		return func(data uintptr) bool {
+			p.mu.RLock()
+			pointerInside := p.pointerInside
+			p.mu.RUnlock()
+			// Double-check: only dismiss if still not active and pointer still outside
+			if p.window.IsVisible() && !p.window.IsActive() && !pointerInside {
+				p.hideAll()
+			}
+			p.dismissTimer = 0
+			return false
+		}
+	})
 }
 
 // NewPopup creates a new popup window.
@@ -61,6 +213,10 @@ func NewPopup(timeRange time.Duration, noAutoDismiss bool) *Popup {
 
 // Init initializes the GTK widgets. Must be called from GTK main thread.
 func (p *Popup) Init() {
+	// Initialize widget -> data lookup maps
+	p.widgetEvents = make(map[uintptr]*calendar.Event)
+	p.widgetLinks = make(map[uintptr]string)
+
 	// Initialize libadwaita for automatic dark/light mode support
 	adw.Init()
 
@@ -554,18 +710,7 @@ func (p *Popup) Show() {
 	if p.window == nil {
 		return
 	}
-	var cb glib.SourceFunc = func(data uintptr) bool {
-		// Reset to list view when showing
-		if p.stack != nil {
-			p.stack.SetVisibleChildName("list")
-		}
-		p.detailsEvent = nil
-		p.updateList()
-		p.window.SetVisible(true)
-		p.window.Present()
-		return false // Remove idle source
-	}
-	glib.IdleAdd(&cb, 0)
+	glib.IdleAdd(p.getShowCb(), 0)
 }
 
 // Hide hides the popup window.
@@ -573,11 +718,7 @@ func (p *Popup) Hide() {
 	if p.window == nil {
 		return
 	}
-	var cb glib.SourceFunc = func(data uintptr) bool {
-		p.hideAll()
-		return false
-	}
-	glib.IdleAdd(&cb, 0)
+	glib.IdleAdd(p.getHideCb(), 0)
 }
 
 func (p *Popup) hideAll() {
@@ -593,18 +734,7 @@ func (p *Popup) startDismissTimer() {
 	if p.dismissTimer != 0 {
 		return
 	}
-	var cb glib.SourceFunc = func(data uintptr) bool {
-		p.mu.RLock()
-		pointerInside := p.pointerInside
-		p.mu.RUnlock()
-		// Double-check: only dismiss if still not active and pointer still outside
-		if p.window.IsVisible() && !p.window.IsActive() && !pointerInside {
-			p.hideAll()
-		}
-		p.dismissTimer = 0
-		return false
-	}
-	p.dismissTimer = glib.TimeoutAdd(300, &cb, 0)
+	p.dismissTimer = glib.TimeoutAdd(300, p.getDismissTimerCb(), 0)
 }
 
 // Toggle shows or hides the popup.
@@ -612,22 +742,7 @@ func (p *Popup) Toggle() {
 	if p.window == nil {
 		return
 	}
-	var cb glib.SourceFunc = func(data uintptr) bool {
-		if p.window.IsVisible() {
-			p.hideAll()
-		} else {
-			// Reset to list view when showing
-			if p.stack != nil {
-				p.stack.SetVisibleChildName("list")
-			}
-			p.detailsEvent = nil
-			p.updateList()
-			p.window.SetVisible(true)
-			p.window.Present()
-		}
-		return false
-	}
-	glib.IdleAdd(&cb, 0)
+	glib.IdleAdd(p.getToggleCb(), 0)
 }
 
 // SetEvents updates the event list.
@@ -639,11 +754,7 @@ func (p *Popup) SetEvents(events []calendar.Event) {
 	p.loading = false
 	p.mu.Unlock()
 
-	var cb glib.SourceFunc = func(data uintptr) bool {
-		p.updateList()
-		return false
-	}
-	glib.IdleAdd(&cb, 0)
+	glib.IdleAdd(p.getUpdateListCb(), 0)
 }
 
 // SetStale marks the data as potentially stale.
@@ -652,11 +763,7 @@ func (p *Popup) SetStale(stale bool) {
 	p.stale = stale
 	p.mu.Unlock()
 
-	var cb glib.SourceFunc = func(data uintptr) bool {
-		p.updateStatusBar()
-		return false
-	}
-	glib.IdleAdd(&cb, 0)
+	glib.IdleAdd(p.getUpdateStatusCb(), 0)
 }
 
 // OnJoin sets the callback for when a join button is clicked.
@@ -669,6 +776,10 @@ func (p *Popup) updateList() {
 	if p.listBox == nil {
 		return
 	}
+
+	// Clear widget -> data lookup maps before rebuilding
+	p.widgetEvents = make(map[uintptr]*calendar.Event)
+	p.widgetLinks = make(map[uintptr]string)
 
 	// Clear existing timed events
 	for child := p.listBox.GetFirstChild(); child != nil; child = p.listBox.GetFirstChild() {
@@ -879,11 +990,9 @@ func (p *Popup) createTimedEventRow(event calendar.Event, now time.Time) *gtk.Bo
 
 	// Make row clickable to show details
 	clickGesture := gtk.NewGestureClick()
-	eventCopy := event // Capture for closure
-	clickCb := func(gesture gtk.GestureClick, nPress int, x, y float64) {
-		p.showDetails(eventCopy)
-	}
-	clickGesture.ConnectReleased(&clickCb)
+	eventCopy := event // Store for lookup
+	p.widgetEvents[row.GoPointer()] = &eventCopy
+	clickGesture.ConnectReleased(p.getEventRowClickCb())
 	row.AddController(&clickGesture.EventController)
 
 	// Time indicator
@@ -941,11 +1050,9 @@ func (p *Popup) createAllDayEventRow(event calendar.Event, now time.Time) *gtk.B
 
 	// Make row clickable to show details
 	clickGesture := gtk.NewGestureClick()
-	eventCopy := event // Capture for closure
-	clickCb := func(gesture gtk.GestureClick, nPress int, x, y float64) {
-		p.showDetails(eventCopy)
-	}
-	clickGesture.ConnectReleased(&clickCb)
+	eventCopy := event // Store for lookup
+	p.widgetEvents[row.GoPointer()] = &eventCopy
+	clickGesture.ConnectReleased(p.getEventRowClickCb())
 	row.AddController(&clickGesture.EventController)
 
 	// Title
@@ -1112,16 +1219,9 @@ func (p *Popup) createJoinButton(meetingLink string) *gtk.Button {
 
 	btn.SetChild(&box.Widget)
 
-	clickCb := func(b gtk.Button) {
-		slog.Debug("join clicked", "url", meetingLink)
-		if p.onJoin != nil {
-			p.onJoin(meetingLink)
-		} else {
-			links.Open(meetingLink)
-		}
-		p.Hide()
-	}
-	btn.ConnectClicked(&clickCb)
+	// Store link for lookup and use stable callback
+	p.widgetLinks[btn.GoPointer()] = meetingLink
+	btn.ConnectClicked(p.getJoinClickCb())
 
 	return btn
 }
@@ -1173,10 +1273,7 @@ func (p *Popup) showDetails(event calendar.Event) {
 	backBtn := gtk.NewButton()
 	backBtn.SetIconName("go-previous-symbolic")
 	backBtn.AddCssClass("details-back-btn")
-	backClickCb := func(b gtk.Button) {
-		p.hideDetails()
-	}
-	backBtn.ConnectClicked(&backClickCb)
+	backBtn.ConnectClicked(p.getBackBtnClickCb())
 	detailsHeader.Append(&backBtn.Widget)
 
 	headerTitle := gtk.NewLabel("Event Details")
