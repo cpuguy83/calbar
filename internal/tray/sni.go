@@ -18,6 +18,7 @@ const (
 	sniPath          = "/StatusNotifierItem"
 	watcherInterface = "org.kde.StatusNotifierWatcher"
 	watcherPath      = "/StatusNotifierWatcher"
+	watcherBusName   = "org.kde.StatusNotifierWatcher"
 
 	// Icon names (using freedesktop standard icons)
 	iconNormal   = "x-office-calendar"
@@ -46,6 +47,9 @@ type Tray struct {
 
 	// Callbacks
 	onActivate func() // Called when tray icon is clicked
+
+	// For clean shutdown of watcher goroutine
+	stopCh chan struct{}
 }
 
 // New creates a new system tray icon.
@@ -59,6 +63,7 @@ func New() (*Tray, error) {
 		conn:    conn,
 		state:   StateNormal,
 		tooltip: "CalBar",
+		stopCh:  make(chan struct{}),
 	}
 
 	return t, nil
@@ -127,23 +132,86 @@ func (t *Tray) Start() error {
 		return fmt.Errorf("export introspection: %w", err)
 	}
 
-	// Get our unique connection name (e.g., ":1.123")
-	uniqueName := t.conn.Names()[0]
+	// Initial registration with the watcher
+	t.registerWithWatcher()
 
-	// Register with the StatusNotifierWatcher
-	watcher := t.conn.Object("org.kde.StatusNotifierWatcher", watcherPath)
+	// Watch for StatusNotifierWatcher restarts (e.g., when waybar restarts)
+	go t.handleWatcherSignals()
+
+	slog.Info("tray icon registered", "bus_name", t.busName, "connection", t.conn.Names()[0])
+	return nil
+}
+
+// registerWithWatcher registers this tray icon with the StatusNotifierWatcher.
+// This is called on startup and whenever the watcher service restarts.
+func (t *Tray) registerWithWatcher() {
+	uniqueName := t.conn.Names()[0]
+	watcher := t.conn.Object(watcherBusName, watcherPath)
 	call := watcher.Call(watcherInterface+".RegisterStatusNotifierItem", 0, uniqueName)
 	if call.Err != nil {
 		slog.Warn("failed to register with StatusNotifierWatcher", "error", call.Err)
 		// Continue anyway - some environments don't have a watcher
+	} else {
+		slog.Debug("registered with StatusNotifierWatcher", "connection", uniqueName)
+	}
+}
+
+// handleWatcherSignals listens for D-Bus signals indicating the StatusNotifierWatcher
+// service has restarted (e.g., when waybar restarts) and re-registers our tray icon.
+func (t *Tray) handleWatcherSignals() {
+	// Subscribe to NameOwnerChanged signals for the watcher bus name
+	matchRule := fmt.Sprintf(
+		"type='signal',interface='org.freedesktop.DBus',member='NameOwnerChanged',arg0='%s'",
+		watcherBusName,
+	)
+	if err := t.conn.BusObject().Call("org.freedesktop.DBus.AddMatch", 0, matchRule).Err; err != nil {
+		slog.Warn("failed to add D-Bus match rule for watcher monitoring", "error", err)
+		return
 	}
 
-	slog.Info("tray icon registered", "bus_name", t.busName, "connection", uniqueName)
-	return nil
+	// Channel for D-Bus signals - size 1 acts as a coalescing buffer
+	// If multiple signals arrive while we're processing, we only need to
+	// re-register once, so dropping intermediate signals is fine
+	sigCh := make(chan *dbus.Signal, 1)
+	t.conn.Signal(sigCh)
+
+	defer t.conn.RemoveSignal(sigCh)
+
+	for {
+		select {
+		case <-t.stopCh:
+			return
+		case sig, ok := <-sigCh:
+			if !ok {
+				return
+			}
+			// NameOwnerChanged has args: (name string, old_owner string, new_owner string)
+			if sig.Name != "org.freedesktop.DBus.NameOwnerChanged" {
+				continue
+			}
+			if len(sig.Body) < 3 {
+				continue
+			}
+			name, ok := sig.Body[0].(string)
+			if !ok || name != watcherBusName {
+				continue
+			}
+			newOwner, ok := sig.Body[2].(string)
+			if !ok {
+				continue
+			}
+			// If the watcher has a new owner (non-empty), re-register
+			if newOwner != "" {
+				slog.Info("StatusNotifierWatcher restarted, re-registering tray icon")
+				t.registerWithWatcher()
+			}
+		}
+	}
 }
 
 // Stop removes the tray icon.
 func (t *Tray) Stop() error {
+	close(t.stopCh)
 	return t.conn.Close()
 }
 
