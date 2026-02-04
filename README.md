@@ -38,7 +38,44 @@ sudo make install
 
 - Go 1.25+
 - D-Bus (for notifications and system tray)
-- GTK4 with libadwaita (soon to be optional dmenu support instead of GTK4)
+- GTK4 with libadwaita (optional - use `nogtk` build tag for dmenu-style launcher support)
+
+### NixOS / Home Manager
+
+CalBar provides a Nix flake with multiple packages:
+
+| Package | Description |
+|---------|-------------|
+| `calbar` | GTK4 UI, wrapped for NixOS (recommended) |
+| `calbar-unwrapped` | GTK4 UI, no wrapper (for non-NixOS with GTK in standard paths) |
+| `calbar-lite` | No GTK, dmenu-style launcher only |
+
+```nix
+# flake.nix
+{
+  inputs.calbar.url = "github:cpuguy83/calbar";
+}
+```
+
+**Home Manager module:**
+
+```nix
+# In your home.nix
+{
+  imports = [ inputs.calbar.homeManagerModules.default ];
+
+  services.calbar = {
+    enable = true;
+    # gtk.disable = true;  # Use dmenu-style launcher instead of GTK
+    settings = {
+      sync.interval = "5m";
+      sources = [
+        { name = "Work"; type = "ms365"; }
+      ];
+    };
+  };
+}
+```
 
 ## Configuration
 

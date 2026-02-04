@@ -21,7 +21,8 @@
           }
         );
 
-      mkCalbar =
+      # Build the unwrapped calbar binary
+      mkCalbarUnwrapped =
         pkgs:
         {
           gtk ? {
@@ -42,8 +43,6 @@
 
           doCheck = false; # Tests require D-Bus/GTK
 
-          # GTK libraries are loaded at runtime via dlopen
-
           meta = with pkgs.lib; {
             description = "Calendar system tray app for Linux";
             homepage = "https://github.com/cpuguy83/calbar";
@@ -51,20 +50,70 @@
             platforms = platforms.linux;
           };
         };
+
+      # Create a combined lib folder with symlinks for puregotk
+      # puregotk expects PUREGOTK_LIB_FOLDER to point to a single directory
+      mkGtkLibFolder =
+        pkgs:
+        let
+          libs = [
+            pkgs.gtk4
+            pkgs.gtk4-layer-shell
+            pkgs.libadwaita
+            pkgs.glib.out # Explicit .out for libraries
+            pkgs.cairo
+            pkgs.pango.out # Explicit .out for libraries
+            pkgs.gdk-pixbuf
+            pkgs.graphene
+          ];
+        in
+        pkgs.runCommand "calbar-gtk-libs" { } ''
+          mkdir -p $out/lib
+          for lib in ${pkgs.lib.concatMapStringsSep " " (l: "${l}/lib") libs}; do
+            for f in $lib/*.so*; do
+              if [ -f "$f" ] && [ ! -e "$out/lib/$(basename $f)" ]; then
+                ln -s "$f" "$out/lib/$(basename $f)"
+              fi
+            done
+          done
+        '';
+
+      # Wrap calbar with GTK library paths for NixOS
+      # puregotk loads libraries via dlopen and needs PUREGOTK_LIB_FOLDER
+      mkCalbarWrapped =
+        pkgs:
+        let
+          unwrapped = mkCalbarUnwrapped pkgs { };
+          gtkLibs = mkGtkLibFolder pkgs;
+        in
+        pkgs.runCommand "calbar-${unwrapped.version}"
+          {
+            nativeBuildInputs = [ pkgs.makeWrapper ];
+            meta = unwrapped.meta // {
+              mainProgram = "calbar";
+            };
+          }
+          ''
+            mkdir -p $out/bin
+            makeWrapper ${unwrapped}/bin/calbar $out/bin/calbar \
+              --set PUREGOTK_LIB_FOLDER "${gtkLibs}/lib"
+          '';
     in
     {
       packages = forAllSystems (
         { pkgs }:
         {
-          default = mkCalbar pkgs { };
-          calbar = mkCalbar pkgs { };
-          calbar-lite = mkCalbar pkgs { gtk.disable = true; };
+          default = mkCalbarWrapped pkgs;
+          calbar = mkCalbarWrapped pkgs;
+          calbar-unwrapped = mkCalbarUnwrapped pkgs { };
+          calbar-lite = mkCalbarUnwrapped pkgs { gtk.disable = true; };
         }
       );
 
       overlays.default = final: prev: {
-        calbar = mkCalbar final { };
-        calbar-lite = mkCalbar final { gtk.disable = true; };
+        calbar = mkCalbarWrapped final;
+        calbar-unwrapped = mkCalbarUnwrapped final { };
+        calbar-lite = mkCalbarUnwrapped final { gtk.disable = true; };
       };
 
       homeManagerModules.default = import ./hm-module.nix;

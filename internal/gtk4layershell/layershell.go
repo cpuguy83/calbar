@@ -5,8 +5,10 @@
 package gtk4layershell
 
 import (
+	"os"
+	"path/filepath"
+
 	"github.com/jwijenbergh/purego"
-	"github.com/jwijenbergh/puregotk/pkg/core"
 )
 
 // Edge represents which edge of the screen to anchor to.
@@ -85,27 +87,44 @@ func SetNamespace(window uintptr, namespace string) {
 	xSetNamespace(window, namespace)
 }
 
-func init() {
-	// Register library metadata
-	core.SetPackageName("GTK4LAYERSHELL", "gtk4-layer-shell-0")
-	core.SetSharedLibraries("GTK4LAYERSHELL", []string{"libgtk4-layer-shell.so.0"})
+func registerFunc(lib uintptr, fptr any, name string) {
+	sym, err := purego.Dlsym(lib, name)
+	if err != nil {
+		panic(err)
+	}
+	purego.RegisterFunc(fptr, sym)
+}
 
-	// Load the shared library
-	var libs []uintptr
-	for _, libPath := range core.GetPaths("GTK4LAYERSHELL") {
-		lib, err := purego.Dlopen(libPath, purego.RTLD_NOW|purego.RTLD_GLOBAL)
-		if err != nil {
-			panic(err)
+// findLibrary locates the gtk4-layer-shell library.
+// It checks PUREGOTK_LIB_FOLDER first (for NixOS compatibility),
+// then falls back to dlopen's default search path.
+func findLibrary() string {
+	const libName = "libgtk4-layer-shell.so.0"
+
+	// Check PUREGOTK_LIB_FOLDER (used by NixOS wrapper)
+	if folder := os.Getenv("PUREGOTK_LIB_FOLDER"); folder != "" {
+		path := filepath.Join(folder, libName)
+		if _, err := os.Stat(path); err == nil {
+			return path
 		}
-		libs = append(libs, lib)
+	}
+
+	// Fall back to just the library name; dlopen will search standard paths
+	return libName
+}
+
+func init() {
+	lib, err := purego.Dlopen(findLibrary(), purego.RTLD_NOW|purego.RTLD_GLOBAL)
+	if err != nil {
+		panic(err)
 	}
 
 	// Register C functions
-	core.PuregoSafeRegister(&xIsSupported, libs, "gtk_layer_is_supported")
-	core.PuregoSafeRegister(&xInitForWindow, libs, "gtk_layer_init_for_window")
-	core.PuregoSafeRegister(&xSetLayer, libs, "gtk_layer_set_layer")
-	core.PuregoSafeRegister(&xSetAnchor, libs, "gtk_layer_set_anchor")
-	core.PuregoSafeRegister(&xSetMargin, libs, "gtk_layer_set_margin")
-	core.PuregoSafeRegister(&xSetKeyboardMode, libs, "gtk_layer_set_keyboard_mode")
-	core.PuregoSafeRegister(&xSetNamespace, libs, "gtk_layer_set_namespace")
+	registerFunc(lib, &xIsSupported, "gtk_layer_is_supported")
+	registerFunc(lib, &xInitForWindow, "gtk_layer_init_for_window")
+	registerFunc(lib, &xSetLayer, "gtk_layer_set_layer")
+	registerFunc(lib, &xSetAnchor, "gtk_layer_set_anchor")
+	registerFunc(lib, &xSetMargin, "gtk_layer_set_margin")
+	registerFunc(lib, &xSetKeyboardMode, "gtk_layer_set_keyboard_mode")
+	registerFunc(lib, &xSetNamespace, "gtk_layer_set_namespace")
 }
