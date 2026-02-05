@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"sync"
 
 	"github.com/godbus/dbus/v5"
 	"github.com/godbus/dbus/v5/introspect"
@@ -41,9 +40,8 @@ type Tray struct {
 	busName string
 	props   *prop.Properties
 
-	mu      sync.RWMutex
 	state   State
-	tooltip string
+	tooltip toolTip
 
 	// Callbacks
 	onActivate func() // Called when tray icon is clicked
@@ -60,10 +58,13 @@ func New() (*Tray, error) {
 	}
 
 	t := &Tray{
-		conn:    conn,
-		state:   StateNormal,
-		tooltip: "CalBar",
-		stopCh:  make(chan struct{}),
+		conn:   conn,
+		state:  StateNormal,
+		stopCh: make(chan struct{}),
+		tooltip: toolTip{
+			Title: "CalBar",
+			Body:  "CalBar",
+		},
 	}
 
 	return t, nil
@@ -217,9 +218,7 @@ func (t *Tray) Stop() error {
 
 // SetState updates the tray icon state.
 func (t *Tray) SetState(state State) {
-	t.mu.Lock()
 	t.state = state
-	t.mu.Unlock()
 
 	// Update property and emit signal
 	if t.props != nil {
@@ -230,13 +229,11 @@ func (t *Tray) SetState(state State) {
 
 // SetTooltip updates the tooltip text.
 func (t *Tray) SetTooltip(text string) {
-	t.mu.Lock()
-	t.tooltip = text
-	t.mu.Unlock()
+	t.tooltip.Body = text
 
 	// Update property and emit signal
 	if t.props != nil {
-		t.props.SetMust(sniInterface, "ToolTip", t.getToolTip())
+		t.props.SetMust(sniInterface, "ToolTip", t.tooltip)
 	}
 	t.conn.Emit(sniPath, sniInterface+".NewToolTip")
 }
@@ -246,16 +243,9 @@ func (t *Tray) OnActivate(fn func()) {
 	t.onActivate = fn
 }
 
-// getToolTip returns the tooltip struct.
-func (t *Tray) getToolTip() []interface{} {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	return []interface{}{
-		"",           // icon name
-		[]iconData{}, // icon pixmap (empty)
-		"CalBar",     // title
-		t.tooltip,    // description
-	}
+// getToolTip returns the current tooltip struct.
+func (t *Tray) getToolTip() toolTip {
+	return t.tooltip
 }
 
 // iconData represents a single icon in the pixmap array.
@@ -265,11 +255,16 @@ type iconData struct {
 	Data   []byte
 }
 
+// toolTip represents the StatusNotifierItem tooltip struct (sa(iiay)ss).
+type toolTip struct {
+	IconName   string     // Icon name (empty to use pixmap)
+	IconPixmap []iconData // Icon pixmap (can be empty)
+	Title      string     // Tooltip title
+	Body       string     // Tooltip body/description
+}
+
 // getIconPixmap returns the current icon pixmap.
 func (t *Tray) getIconPixmap() []iconData {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-
 	var icon []byte
 	switch t.state {
 	case StateImminent:

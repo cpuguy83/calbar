@@ -323,6 +323,10 @@ func (a *App) updateTrayTooltip() {
 	eventEndGrace := a.cfg.UI.EventEndGrace
 
 	for _, e := range events {
+		// Skip all-day events for tooltip
+		if e.AllDay {
+			continue
+		}
 		// Keep events visible for a grace period after they end
 		if e.End.Add(eventEndGrace).Before(now) {
 			continue
