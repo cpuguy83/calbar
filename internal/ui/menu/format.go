@@ -78,7 +78,11 @@ func formatEventList(events []calendar.Event, timeRange, eventEndGrace time.Dura
 		lines = append(lines, "━━━━ All Day ━━━━")
 		for i := range allDayEvents {
 			e := &allDayEvents[i]
-			line := fmt.Sprintf("  %s", e.Summary)
+			prefix := "  "
+			if e.Stale {
+				prefix = "⚠ "
+			}
+			line := fmt.Sprintf("%s%s", prefix, e.Summary)
 			if e.Source != "" {
 				line += fmt.Sprintf(" (%s)", e.Source)
 			}
@@ -117,7 +121,11 @@ func formatEventLine(e *calendar.Event, now time.Time) string {
 	}
 
 	duration := formatDuration(e.End.Sub(e.Start))
-	return fmt.Sprintf("  %s  %s (%s)", timeStr, e.Summary, duration)
+	prefix := "  "
+	if e.Stale {
+		prefix = "⚠ "
+	}
+	return fmt.Sprintf("%s%s  %s (%s)", prefix, timeStr, e.Summary, duration)
 }
 
 // formatEventDetails formats event details for the details menu.

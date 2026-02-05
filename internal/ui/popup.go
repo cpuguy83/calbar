@@ -1010,13 +1010,20 @@ func (p *Popup) createTimedEventRow(event calendar.Event, now time.Time) *gtk.Bo
 	row.Append(&details.Widget)
 
 	// Title
-	title := gtk.NewLabel(event.Summary)
+	titleText := event.Summary
+	if event.Stale {
+		titleText = "⚠ " + titleText
+	}
+	title := gtk.NewLabel(titleText)
 	title.AddCssClass("event-title")
 	title.SetXalign(0)
 	title.SetEllipsize(pango.EllipsizeEndValue)
 	title.SetMaxWidthChars(35)
 	if event.IsOngoing(now) {
 		title.AddCssClass("ongoing")
+	}
+	if event.Stale {
+		title.AddCssClass("stale")
 	}
 	details.Append(&title.Widget)
 
@@ -1060,10 +1067,17 @@ func (p *Popup) createAllDayEventRow(event calendar.Event, now time.Time) *gtk.B
 	row.AddController(&clickGesture.EventController)
 
 	// Title
-	title := gtk.NewLabel(event.Summary)
+	titleText := event.Summary
+	if event.Stale {
+		titleText = "⚠ " + titleText
+	}
+	title := gtk.NewLabel(titleText)
 	title.AddCssClass("all-day-title")
 	title.SetXalign(0)
 	title.SetEllipsize(pango.EllipsizeEndValue)
+	if event.Stale {
+		title.AddCssClass("stale")
+	}
 	row.Append(&title.Widget)
 
 	// Meta: date range + source

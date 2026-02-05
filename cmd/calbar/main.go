@@ -243,15 +243,41 @@ func (a *App) cleanup() {
 }
 
 // onSyncComplete is called after each sync completes.
-func (a *App) onSyncComplete(events []calendar.Event, err error) {
+func (a *App) onSyncComplete(events []calendar.Event, failedSources []string, err error) {
 	a.mu.Lock()
 	if err != nil {
 		slog.Warn("sync failed", "error", err)
 		a.lastSyncErr = err
-		// Keep old events on error
+		// Keep old events on complete failure
 	} else {
-		a.events = events
+		// Build set of failed sources for quick lookup
+		failedSet := make(map[string]bool, len(failedSources))
+		for _, s := range failedSources {
+			failedSet[s] = true
+		}
+
+		// Keep old events from failed sources, marking them as stale
+		var merged []calendar.Event
+		for _, e := range a.events {
+			if failedSet[e.Source] {
+				e.Stale = true
+				merged = append(merged, e)
+			}
+		}
+
+		// Add new events from successful sources (not stale)
+		for i := range events {
+			events[i].Stale = false
+		}
+		merged = append(merged, events...)
+
+		// Merge and sort
+		a.events = calendar.Merge(merged)
 		a.lastSyncErr = nil
+
+		if len(failedSources) > 0 {
+			slog.Warn("some sources failed, keeping stale events", "failed_sources", failedSources)
+		}
 	}
 	a.lastSync = time.Now()
 	a.mu.Unlock()

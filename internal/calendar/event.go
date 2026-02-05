@@ -37,6 +37,9 @@ type Event struct {
 
 	// URL is a URL associated with the event (if any).
 	URL string
+
+	// Stale indicates this event is from a failed sync and may be outdated.
+	Stale bool
 }
 
 // Duration returns the duration of the event.
