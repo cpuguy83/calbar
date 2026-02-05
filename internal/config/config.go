@@ -72,11 +72,12 @@ type NotificationConfig struct {
 
 // UIConfig configures the tray app UI.
 type UIConfig struct {
-	TimeRange time.Duration `yaml:"time_range"` // How far ahead to look (default: 7 days)
-	MaxEvents int           `yaml:"max_events"` // Max events to show (default: 20)
-	Theme     string        `yaml:"theme"`      // "system", "light", "dark"
-	Backend   string        `yaml:"backend"`    // "auto", "gtk", "menu" (default: auto)
-	Menu      MenuConfig    `yaml:"menu"`       // Menu-specific configuration
+	TimeRange     time.Duration `yaml:"time_range"`      // How far ahead to look (default: 7 days)
+	MaxEvents     int           `yaml:"max_events"`      // Max events to show (default: 20)
+	Theme         string        `yaml:"theme"`           // "system", "light", "dark"
+	Backend       string        `yaml:"backend"`         // "auto", "gtk", "menu" (default: auto)
+	Menu          MenuConfig    `yaml:"menu"`            // Menu-specific configuration
+	EventEndGrace time.Duration `yaml:"event_end_grace"` // Keep events visible after they end (default: 5m)
 }
 
 // MenuConfig configures the dmenu-style UI backend.
@@ -145,6 +146,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.UI.Backend == "" {
 		c.UI.Backend = "auto"
+	}
+	if c.UI.EventEndGrace == 0 {
+		c.UI.EventEndGrace = 5 * time.Minute // Default: 5 minutes
 	}
 	if c.Notifications.Before == nil {
 		c.Notifications.Before = []time.Duration{15 * time.Minute, 5 * time.Minute}
@@ -274,9 +278,10 @@ func (c *NotificationConfig) UnmarshalYAML(node *yaml.Node) error {
 // UnmarshalYAML implements custom unmarshaling for UI config.
 func (c *UIConfig) UnmarshalYAML(node *yaml.Node) error {
 	var raw struct {
-		TimeRange string `yaml:"time_range"`
-		MaxEvents int    `yaml:"max_events"`
-		Theme     string `yaml:"theme"`
+		TimeRange     string `yaml:"time_range"`
+		MaxEvents     int    `yaml:"max_events"`
+		Theme         string `yaml:"theme"`
+		EventEndGrace string `yaml:"event_end_grace"`
 	}
 	if err := node.Decode(&raw); err != nil {
 		return err
@@ -288,6 +293,13 @@ func (c *UIConfig) UnmarshalYAML(node *yaml.Node) error {
 			return fmt.Errorf("parse time_range: %w", err)
 		}
 		c.TimeRange = d
+	}
+	if raw.EventEndGrace != "" {
+		d, err := time.ParseDuration(raw.EventEndGrace)
+		if err != nil {
+			return fmt.Errorf("parse event_end_grace: %w", err)
+		}
+		c.EventEndGrace = d
 	}
 	c.MaxEvents = raw.MaxEvents
 	c.Theme = raw.Theme

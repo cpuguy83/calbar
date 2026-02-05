@@ -12,7 +12,7 @@ import (
 
 // formatEventList formats events for the main event list menu.
 // Returns lines to display and a map of line -> event for selection handling.
-func formatEventList(events []calendar.Event, timeRange time.Duration) ([]string, map[string]*calendar.Event) {
+func formatEventList(events []calendar.Event, timeRange, eventEndGrace time.Duration) ([]string, map[string]*calendar.Event) {
 	now := time.Now()
 	cutoff := now.Add(timeRange)
 	localNow := now.Local()
@@ -23,7 +23,8 @@ func formatEventList(events []calendar.Event, timeRange time.Duration) ([]string
 	var allDayEvents []calendar.Event
 
 	for _, e := range events {
-		if e.End.Before(now) {
+		// Keep events visible for a grace period after they end
+		if e.End.Add(eventEndGrace).Before(now) {
 			continue
 		}
 		if e.Start.After(cutoff) {

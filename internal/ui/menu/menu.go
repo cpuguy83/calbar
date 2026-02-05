@@ -16,9 +16,10 @@ import (
 
 // Config holds menu UI configuration.
 type Config struct {
-	Program   string   // dmenu program to use (auto-detect if empty)
-	Args      []string // extra args to pass to the program
-	TimeRange time.Duration
+	Program       string   // dmenu program to use (auto-detect if empty)
+	Args          []string // extra args to pass to the program
+	TimeRange     time.Duration
+	EventEndGrace time.Duration // Keep events visible after they end
 }
 
 // Menu implements the ui.UI interface using dmenu-style launchers.
@@ -123,7 +124,7 @@ func (m *Menu) OnAction(fn func(ui.Action)) {
 
 // showEventList displays the event list and handles selection.
 func (m *Menu) showEventList(events []calendar.Event) {
-	lines, eventMap := formatEventList(events, m.cfg.TimeRange)
+	lines, eventMap := formatEventList(events, m.cfg.TimeRange, m.cfg.EventEndGrace)
 
 	selected, err := m.runDmenu(lines, "CalBar")
 	if err != nil {

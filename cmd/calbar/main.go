@@ -104,15 +104,17 @@ func (a *App) selectBackend() (ui.UI, error) {
 		slog.Info("using GTK backend")
 		return ui.NewGTK(ui.Config{
 			TimeRange:     a.cfg.UI.TimeRange,
+			EventEndGrace: a.cfg.UI.EventEndGrace,
 			NoAutoDismiss: a.noAutoDismiss,
 		}), nil
 
 	case "menu":
 		slog.Info("using menu backend")
 		return menu.New(menu.Config{
-			Program:   a.cfg.UI.Menu.Program,
-			Args:      a.cfg.UI.Menu.Args,
-			TimeRange: a.cfg.UI.TimeRange,
+			Program:       a.cfg.UI.Menu.Program,
+			Args:          a.cfg.UI.Menu.Args,
+			TimeRange:     a.cfg.UI.TimeRange,
+			EventEndGrace: a.cfg.UI.EventEndGrace,
 		})
 
 	case "auto", "":
@@ -121,14 +123,16 @@ func (a *App) selectBackend() (ui.UI, error) {
 			slog.Info("auto-selected GTK backend")
 			return ui.NewGTK(ui.Config{
 				TimeRange:     a.cfg.UI.TimeRange,
+				EventEndGrace: a.cfg.UI.EventEndGrace,
 				NoAutoDismiss: a.noAutoDismiss,
 			}), nil
 		}
 		slog.Info("GTK not available, falling back to menu backend")
 		return menu.New(menu.Config{
-			Program:   a.cfg.UI.Menu.Program,
-			Args:      a.cfg.UI.Menu.Args,
-			TimeRange: a.cfg.UI.TimeRange,
+			Program:       a.cfg.UI.Menu.Program,
+			Args:          a.cfg.UI.Menu.Args,
+			TimeRange:     a.cfg.UI.TimeRange,
+			EventEndGrace: a.cfg.UI.EventEndGrace,
 		})
 
 	default:
@@ -290,9 +294,11 @@ func (a *App) updateTrayState() {
 	a.mu.RUnlock()
 
 	now := time.Now()
+	eventEndGrace := a.cfg.UI.EventEndGrace
 
 	for _, e := range events {
-		if e.End.Before(now) {
+		// Keep events visible for a grace period after they end
+		if e.End.Add(eventEndGrace).Before(now) {
 			continue
 		}
 
@@ -314,9 +320,11 @@ func (a *App) updateTrayTooltip() {
 
 	now := time.Now()
 	cutoff := now.Add(a.cfg.UI.TimeRange)
+	eventEndGrace := a.cfg.UI.EventEndGrace
 
 	for _, e := range events {
-		if e.End.Before(now) {
+		// Keep events visible for a grace period after they end
+		if e.End.Add(eventEndGrace).Before(now) {
 			continue
 		}
 		if e.Start.After(cutoff) {
@@ -368,9 +376,11 @@ func (a *App) checkNotifications() {
 	a.mu.RUnlock()
 
 	now := time.Now()
+	eventEndGrace := a.cfg.UI.EventEndGrace
 
 	for _, e := range events {
-		if e.End.Before(now) {
+		// Keep events visible for a grace period after they end
+		if e.End.Add(eventEndGrace).Before(now) {
 			continue
 		}
 

@@ -49,4 +49,5 @@ const (
 type Config struct {
 	TimeRange     time.Duration
 	NoAutoDismiss bool
+	EventEndGrace time.Duration // Keep events visible after they end
 }

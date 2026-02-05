@@ -205,9 +205,9 @@ func (s *ICSSource) parseEvent(comp *ics.Component) ([]Event, error) {
 	}
 
 	// Recurring event - expand occurrences
-	// Look from now to the configured end time
+	// Look back by duration to catch events that have started but haven't ended yet
 	now := time.Now()
-	rangeStart := now
+	rangeStart := now.Add(-duration)
 	rangeEnd := s.end
 
 	occurrences := rset.Between(rangeStart, rangeEnd, true)

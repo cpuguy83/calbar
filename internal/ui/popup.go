@@ -57,6 +57,7 @@ type Popup struct {
 	mu            sync.RWMutex
 	events        []calendar.Event
 	timeRange     time.Duration
+	eventEndGrace time.Duration
 	stale         bool
 	lastSync      time.Time
 	loading       bool
@@ -203,9 +204,10 @@ func (p *Popup) getDismissTimerCb() *glib.SourceFunc {
 }
 
 // NewPopup creates a new popup window.
-func NewPopup(timeRange time.Duration, noAutoDismiss bool) *Popup {
+func NewPopup(timeRange, eventEndGrace time.Duration, noAutoDismiss bool) *Popup {
 	return &Popup{
 		timeRange:     timeRange,
+		eventEndGrace: eventEndGrace,
 		loading:       true,
 		noAutoDismiss: noAutoDismiss,
 	}
@@ -795,6 +797,7 @@ func (p *Popup) updateList() {
 	p.mu.RLock()
 	events := p.events
 	timeRange := p.timeRange
+	eventEndGrace := p.eventEndGrace
 	loading := p.loading
 	p.mu.RUnlock()
 
@@ -815,7 +818,8 @@ func (p *Popup) updateList() {
 	var allDayEvents []calendar.Event
 
 	for _, e := range events {
-		if e.End.Before(now) {
+		// Keep events visible for a grace period after they end
+		if e.End.Add(eventEndGrace).Before(now) {
 			continue
 		}
 		if e.Start.After(cutoff) {
