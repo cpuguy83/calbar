@@ -1117,6 +1117,7 @@ func (p *Popup) createTimeIndicator(event calendar.Event, now time.Time) *gtk.Bo
 
 	// Convert to local time for display
 	localStart := event.Start.Local()
+	localNow := now.Local()
 
 	if event.IsOngoing(now) {
 		box.AddCssClass("now")
@@ -1130,12 +1131,22 @@ func (p *Popup) createTimeIndicator(event calendar.Event, now time.Time) *gtk.Bo
 	} else {
 		startsIn := event.Start.Sub(now)
 		primary = localStart.Format("3:04")
-		secondary = localStart.Format("PM")
 
 		if startsIn <= 15*time.Minute && startsIn > 0 {
 			box.AddCssClass("imminent")
 			primary = fmt.Sprintf("%dm", int(startsIn.Minutes()))
 			secondary = "away"
+		} else if localStart.YearDay() == localNow.YearDay() && localStart.Year() == localNow.Year() {
+			// Same day: show "in Xm" or "in Xh"
+			if startsIn < time.Hour {
+				secondary = fmt.Sprintf("in %dm", int(startsIn.Minutes()))
+			} else {
+				hours := int(startsIn.Hours())
+				secondary = fmt.Sprintf("in %dh", hours)
+			}
+		} else {
+			// Future day: just show AM/PM
+			secondary = localStart.Format("PM")
 		}
 	}
 
