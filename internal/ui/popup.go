@@ -575,6 +575,15 @@ func (p *Popup) applyCSS() {
 			border-bottom: 1px solid alpha(@borders, 0.2);
 		}
 
+		/* No events indicator for empty days */
+		.no-events-row {
+			padding: 12px 16px;
+			font-size: 13px;
+			font-style: italic;
+			color: alpha(@view_fg_color, 0.4);
+			border-bottom: 1px solid alpha(@borders, 0.2);
+		}
+
 		/* All-day section */
 		.all-day-section {
 			background: alpha(@view_bg_color, 0.3);
@@ -933,22 +942,47 @@ func (p *Popup) showNoTimedEventsState() {
 
 // populateTimedEvents adds timed event rows grouped by day.
 func (p *Popup) populateTimedEvents(events []calendar.Event, now time.Time) {
-	var lastDay string
+	// Build a set of days that have events
+	daysWithEvents := make(map[string]bool)
+	for _, event := range events {
+		day := p.getDayLabel(event.Start, now)
+		daysWithEvents[day] = true
+	}
 
+	// Always show "Today" first, even if no events
+	if !daysWithEvents["Today"] && len(events) > 0 {
+		p.addDaySeparator("Today")
+		p.addNoEventsRow("No more events today")
+	}
+
+	var lastDay string
 	for _, event := range events {
 		// Day separator
 		day := p.getDayLabel(event.Start, now)
 		if day != lastDay {
-			sep := gtk.NewLabel(day)
-			sep.AddCssClass("day-separator")
-			sep.SetXalign(0)
-			p.listBox.Append(&sep.Widget)
+			p.addDaySeparator(day)
 			lastDay = day
 		}
 
 		row := p.createTimedEventRow(event, now)
 		p.listBox.Append(&row.Widget)
 	}
+}
+
+// addDaySeparator adds a day separator label.
+func (p *Popup) addDaySeparator(day string) {
+	sep := gtk.NewLabel(day)
+	sep.AddCssClass("day-separator")
+	sep.SetXalign(0)
+	p.listBox.Append(&sep.Widget)
+}
+
+// addNoEventsRow adds a subtle "no events" indicator row.
+func (p *Popup) addNoEventsRow(text string) {
+	label := gtk.NewLabel(text)
+	label.AddCssClass("no-events-row")
+	label.SetXalign(0)
+	p.listBox.Append(&label.Widget)
 }
 
 // populateAllDayEvents adds the all-day events to the fixed bottom section.
