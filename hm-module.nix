@@ -7,7 +7,7 @@
 }:
 let
   cfg = config.services.calbar;
-  tomlFormat = pkgs.formats.yaml { };
+  yamlFormat = pkgs.formats.yaml { };
 in
 {
   options.services.calbar = {
@@ -26,7 +26,7 @@ in
     };
 
     settings = lib.mkOption {
-      type = tomlFormat.type;
+      type = yamlFormat.type;
       default = { };
       example = lib.literalExpression ''
         {
@@ -67,7 +67,8 @@ in
     ];
 
     xdg.configFile."calbar/config.yaml" = lib.mkIf (cfg.settings != { }) {
-      source = tomlFormat.generate "calbar-config.yaml" cfg.settings;
+      source = yamlFormat.generate "calbar-config.yaml" cfg.settings;
+      onChange = "systemctl --user restart calbar.service || true";
     };
 
     xdg.desktopEntries.calbar = {
