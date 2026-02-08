@@ -10,6 +10,7 @@ A calendar tray app for Linux desktops, similar to [Dato](https://sindresorhus.c
 
 - **Multiple calendar sources**: ICS feeds, CalDAV, Microsoft 365
 - **Include/exclude filtering**: Only show events matching specific rules (great for filtering noisy work calendars)
+- **Hide events**: Temporarily hide individual events from view (great for dismissed meetings or noise)
 - **System tray integration**: StatusNotifierItem (SNI) for Waybar and other modern tray implementations
 - **Meeting link detection**: Automatically detects Zoom, Teams, Meet, and Webex links
 - **Desktop notifications**: Configurable reminders before events with "Join" action buttons
@@ -293,6 +294,33 @@ When a meeting link is detected:
 - The tray popup shows a "Join" button
 - Notifications include a "Join Meeting" action
 - Clicking opens the link in your default browser
+
+## Hiding Events
+
+You can temporarily hide individual events from the calendar view. This is useful for:
+- Dismissed or declined meetings that still appear on your calendar
+- All-day events you don't need to see
+- Recurring events you want to hide just for today
+
+### How it works
+
+**GTK UI:**
+- Click an event to open its details
+- Click the "Hide" button at the bottom
+- Hidden events show a count in the status bar (e.g., "2 hidden")
+- Click the hidden count to view and unhide events
+
+**Menu/dmenu UI:**
+- Select an event to open its details
+- Select "Hide this event"
+- A hidden events indicator appears at the bottom of the event list
+- Select it to view and unhide events
+
+### Notes
+
+- Hidden events are **ephemeral** - they reset when CalBar restarts
+- Hidden events are automatically cleaned up when they end (after the grace period)
+- Hiding applies to specific event instances, not recurring series
 
 ## Troubleshooting
 

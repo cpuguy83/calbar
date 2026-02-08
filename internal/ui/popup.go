@@ -46,16 +46,21 @@ type Popup struct {
 	content       *gtk.Box
 	listBox       *gtk.ListBox
 	allDaySection *gtk.Box
-	statusBar     *gtk.Label
+	statusBar     *gtk.Box
+	statusText    *gtk.Label
+	hiddenCount   *gtk.Label
 
 	// Details panel
-	stack        *gtk.Stack
-	listView     *gtk.Box
-	detailsView  *gtk.Box
-	detailsEvent *calendar.Event
+	stack             *gtk.Stack
+	listView          *gtk.Box
+	detailsView       *gtk.Box
+	hiddenView        *gtk.Box
+	detailsEvent      *calendar.Event
+	detailsFromHidden bool // true if viewing details from hidden events list
 
 	mu            sync.RWMutex
 	events        []calendar.Event
+	hiddenEvents  []calendar.Event
 	timeRange     time.Duration
 	eventEndGrace time.Duration
 	stale         bool
@@ -66,17 +71,27 @@ type Popup struct {
 
 	dismissTimer uint
 	onJoin       func(url string)
+	onHide       func(uid string)
+	onUnhide     func(uid string)
 
 	// Stable callback references to avoid exhausting purego callback slots.
-	eventRowClickCb stableCallback[func(gtk.GestureClick, int, float64, float64)]
-	joinClickCb     stableCallback[func(gtk.Button)]
-	backBtnClickCb  stableCallback[func(gtk.Button)]
-	updateListCb    stableCallback[glib.SourceFunc]
-	updateStatusCb  stableCallback[glib.SourceFunc]
-	showCb          stableCallback[glib.SourceFunc]
-	hideCb          stableCallback[glib.SourceFunc]
-	toggleCb        stableCallback[glib.SourceFunc]
-	dismissTimerCb  stableCallback[glib.SourceFunc]
+	eventRowClickCb        stableCallback[func(gtk.GestureClick, int, float64, float64)]
+	eventRowRightClickCb   stableCallback[func(gtk.GestureClick, int, float64, float64)]
+	hiddenIndicatorClickCb stableCallback[func(gtk.GestureClick, int, float64, float64)]
+	unhideRowClickCb       stableCallback[func(gtk.GestureClick, int, float64, float64)]
+	unhideBtnClickCb       stableCallback[func(gtk.Button)]
+	joinClickCb            stableCallback[func(gtk.Button)]
+	hideClickCb            stableCallback[func(gtk.Button)]
+	unhideClickCb          stableCallback[func(gtk.Button)]
+	backBtnClickCb         stableCallback[func(gtk.Button)]
+	hiddenBackBtnClickCb   stableCallback[func(gtk.Button)]
+	updateListCb           stableCallback[glib.SourceFunc]
+	updateHiddenViewCb     stableCallback[glib.SourceFunc]
+	updateStatusCb         stableCallback[glib.SourceFunc]
+	showCb                 stableCallback[glib.SourceFunc]
+	hideCb                 stableCallback[glib.SourceFunc]
+	toggleCb               stableCallback[glib.SourceFunc]
+	dismissTimerCb         stableCallback[glib.SourceFunc]
 
 	// Widget -> data lookup for stable callbacks (accessed only from GTK main thread)
 	widgetEvents map[uintptr]*calendar.Event
@@ -100,6 +115,23 @@ func (p *Popup) getEventRowClickCb() *func(gtk.GestureClick, int, float64, float
 	})
 }
 
+func (p *Popup) getEventRowRightClickCb() *func(gtk.GestureClick, int, float64, float64) {
+	return p.eventRowRightClickCb.get(func() func(gtk.GestureClick, int, float64, float64) {
+		return func(gesture gtk.GestureClick, nPress int, x, y float64) {
+			widget := gesture.GetWidget()
+			if widget == nil {
+				return
+			}
+			if event, ok := p.widgetEvents[widget.GoPointer()]; ok {
+				slog.Debug("hide event via right-click", "uid", event.UID)
+				if p.onHide != nil {
+					p.onHide(event.UID)
+				}
+			}
+		}
+	})
+}
+
 func (p *Popup) getJoinClickCb() *func(gtk.Button) {
 	return p.joinClickCb.get(func() func(gtk.Button) {
 		return func(btn gtk.Button) {
@@ -116,6 +148,77 @@ func (p *Popup) getJoinClickCb() *func(gtk.Button) {
 	})
 }
 
+func (p *Popup) getHideClickCb() *func(gtk.Button) {
+	return p.hideClickCb.get(func() func(gtk.Button) {
+		return func(btn gtk.Button) {
+			if p.detailsEvent != nil {
+				slog.Debug("hide event via button", "uid", p.detailsEvent.UID)
+				if p.onHide != nil {
+					p.onHide(p.detailsEvent.UID)
+				}
+				p.hideDetails()
+			}
+		}
+	})
+}
+
+func (p *Popup) getHiddenIndicatorClickCb() *func(gtk.GestureClick, int, float64, float64) {
+	return p.hiddenIndicatorClickCb.get(func() func(gtk.GestureClick, int, float64, float64) {
+		return func(gesture gtk.GestureClick, nPress int, x, y float64) {
+			p.showHiddenView()
+		}
+	})
+}
+
+func (p *Popup) getUnhideRowClickCb() *func(gtk.GestureClick, int, float64, float64) {
+	return p.unhideRowClickCb.get(func() func(gtk.GestureClick, int, float64, float64) {
+		return func(gesture gtk.GestureClick, nPress int, x, y float64) {
+			widget := gesture.GetWidget()
+			if widget == nil {
+				return
+			}
+			if event, ok := p.widgetEvents[widget.GoPointer()]; ok {
+				// Show details view for hidden event
+				p.detailsFromHidden = true
+				p.showDetails(*event)
+			}
+		}
+	})
+}
+
+func (p *Popup) getUnhideBtnClickCb() *func(gtk.Button) {
+	return p.unhideBtnClickCb.get(func() func(gtk.Button) {
+		return func(btn gtk.Button) {
+			if event, ok := p.widgetEvents[btn.GoPointer()]; ok {
+				slog.Debug("unhide event from button", "uid", event.UID)
+				if p.onUnhide != nil {
+					p.onUnhide(event.UID)
+				}
+			}
+		}
+	})
+}
+
+func (p *Popup) getUnhideClickCb() *func(gtk.Button) {
+	return p.unhideClickCb.get(func() func(gtk.Button) {
+		return func(btn gtk.Button) {
+			if p.detailsEvent != nil && p.onUnhide != nil {
+				slog.Debug("unhide event from details", "uid", p.detailsEvent.UID)
+				p.onUnhide(p.detailsEvent.UID)
+				p.hideDetails()
+			}
+		}
+	})
+}
+
+func (p *Popup) getHiddenBackBtnClickCb() *func(gtk.Button) {
+	return p.hiddenBackBtnClickCb.get(func() func(gtk.Button) {
+		return func(btn gtk.Button) {
+			p.hideHiddenView()
+		}
+	})
+}
+
 func (p *Popup) getBackBtnClickCb() *func(gtk.Button) {
 	return p.backBtnClickCb.get(func() func(gtk.Button) {
 		return func(btn gtk.Button) {
@@ -128,6 +231,18 @@ func (p *Popup) getUpdateListCb() *glib.SourceFunc {
 	return p.updateListCb.get(func() glib.SourceFunc {
 		return func(data uintptr) bool {
 			p.updateList()
+			return false
+		}
+	})
+}
+
+func (p *Popup) getUpdateHiddenViewCb() *glib.SourceFunc {
+	return p.updateHiddenViewCb.get(func() glib.SourceFunc {
+		return func(data uintptr) bool {
+			// Only refresh if hidden view is currently visible
+			if p.stack != nil && p.stack.GetVisibleChildName() == "hidden" {
+				p.showHiddenView()
+			}
 			return false
 		}
 	})
@@ -150,6 +265,7 @@ func (p *Popup) getShowCb() *glib.SourceFunc {
 				p.stack.SetVisibleChildName("list")
 			}
 			p.detailsEvent = nil
+			p.detailsFromHidden = false
 			p.updateList()
 			p.window.SetVisible(true)
 			p.window.Present()
@@ -178,6 +294,7 @@ func (p *Popup) getToggleCb() *glib.SourceFunc {
 					p.stack.SetVisibleChildName("list")
 				}
 				p.detailsEvent = nil
+				p.detailsFromHidden = false
 				p.updateList()
 				p.window.SetVisible(true)
 				p.window.Present()
@@ -367,10 +484,29 @@ func (p *Popup) buildUI() {
 	p.detailsView = gtk.NewBox(gtk.OrientationVerticalValue, 0)
 	p.stack.AddNamed(&p.detailsView.Widget, "details")
 
+	// Hidden events view
+	p.hiddenView = gtk.NewBox(gtk.OrientationVerticalValue, 0)
+	p.stack.AddNamed(&p.hiddenView.Widget, "hidden")
+
 	// Status bar (always visible at bottom, outside stack)
-	p.statusBar = gtk.NewLabel("")
+	p.statusBar = gtk.NewBox(gtk.OrientationHorizontalValue, 8)
 	p.statusBar.AddCssClass("status-bar")
-	p.statusBar.SetXalign(0)
+
+	// Left side: status text
+	p.statusText = gtk.NewLabel("")
+	p.statusText.SetXalign(0)
+	p.statusText.SetHexpand(true)
+	p.statusBar.Append(&p.statusText.Widget)
+
+	// Right side: hidden count (clickable)
+	p.hiddenCount = gtk.NewLabel("")
+	p.hiddenCount.AddCssClass("hidden-count")
+	p.hiddenCount.SetVisible(false)
+	hiddenClick := gtk.NewGestureClick()
+	hiddenClick.ConnectReleased(p.getHiddenIndicatorClickCb())
+	p.hiddenCount.AddController(&hiddenClick.EventController)
+	p.statusBar.Append(&p.hiddenCount.Widget)
+
 	p.content.Append(&p.statusBar.Widget)
 }
 
@@ -694,6 +830,43 @@ func (p *Popup) applyCSS() {
 			min-width: 120px;
 		}
 
+		/* Hide/Unhide button */
+		.details-action-box {
+			margin-top: 16px;
+			padding-top: 16px;
+			border-top: 1px solid alpha(@borders, 0.2);
+		}
+
+		.hide-btn {
+			min-height: 28px;
+			min-width: 80px;
+			padding: 0 12px;
+			border-radius: 8px;
+			font-size: 12px;
+			font-weight: 500;
+			background: alpha(@error_color, 0.1);
+			color: @error_color;
+		}
+
+		.hide-btn:hover {
+			background: alpha(@error_color, 0.2);
+		}
+
+		button.unhide-btn {
+			min-height: 28px;
+			min-width: 80px;
+			padding: 0 12px;
+			border-radius: 8px;
+			font-size: 12px;
+			font-weight: 500;
+			background: alpha(@success_color, 0.1);
+			color: @success_color;
+		}
+
+		button.unhide-btn:hover {
+			background: alpha(@success_color, 0.2);
+		}
+
 		/* Make event rows look clickable */
 		.event-card {
 			cursor: pointer;
@@ -705,6 +878,67 @@ func (p *Popup) applyCSS() {
 
 		.all-day-row:hover {
 			background: alpha(@accent_color, 0.08);
+		}
+
+		/* Hidden count in status bar */
+		.hidden-count {
+			cursor: pointer;
+			color: alpha(@view_fg_color, 0.6);
+			padding: 2px 6px;
+			border-radius: 4px;
+		}
+
+		.hidden-count:hover {
+			background: alpha(@view_fg_color, 0.1);
+			color: @view_fg_color;
+		}
+
+		/* Hidden events view */
+		.hidden-events-list {
+			background: transparent;
+		}
+
+		.hidden-instruction {
+			padding: 8px 16px;
+			font-size: 11px;
+			color: alpha(@view_fg_color, 0.5);
+			font-style: italic;
+		}
+
+		.hidden-event-row {
+			padding: 12px 16px;
+			border-bottom: 1px solid alpha(@borders, 0.2);
+			cursor: pointer;
+		}
+
+		.hidden-event-row:hover {
+			background: alpha(@accent_color, 0.08);
+		}
+
+		.hidden-event-title {
+			font-size: 14px;
+			font-weight: 500;
+			color: @view_fg_color;
+		}
+
+		.hidden-event-meta {
+			font-size: 12px;
+			color: alpha(@view_fg_color, 0.6);
+		}
+
+		/* Unhide icon button in hidden events list */
+		.unhide-icon-btn {
+			min-width: 32px;
+			min-height: 32px;
+			padding: 4px;
+			border-radius: 4px;
+			background: transparent;
+			color: alpha(@view_fg_color, 0.5);
+		}
+
+		.unhide-icon-btn:hover {
+			background: alpha(@success_color, 0.15);
+			color: @success_color;
 		}
 	`
 
@@ -782,6 +1016,26 @@ func (p *Popup) OnJoin(fn func(url string)) {
 	p.onJoin = fn
 }
 
+// OnHide sets the callback for when the user hides an event.
+func (p *Popup) OnHide(fn func(uid string)) {
+	p.onHide = fn
+}
+
+// OnUnhide sets the callback for when the user unhides an event.
+func (p *Popup) OnUnhide(fn func(uid string)) {
+	p.onUnhide = fn
+}
+
+// SetHiddenEvents updates the list of hidden events.
+func (p *Popup) SetHiddenEvents(events []calendar.Event) {
+	p.mu.Lock()
+	p.hiddenEvents = events
+	p.mu.Unlock()
+
+	glib.IdleAdd(p.getUpdateListCb(), 0)
+	glib.IdleAdd(p.getUpdateHiddenViewCb(), 0)
+}
+
 // updateList refreshes the event list UI.
 func (p *Popup) updateList() {
 	if p.listBox == nil {
@@ -805,6 +1059,7 @@ func (p *Popup) updateList() {
 
 	p.mu.RLock()
 	events := p.events
+	hiddenCount := len(p.hiddenEvents)
 	timeRange := p.timeRange
 	eventEndGrace := p.eventEndGrace
 	loading := p.loading
@@ -872,6 +1127,9 @@ func (p *Popup) updateList() {
 			p.populateAllDayEvents(allDayEvents, now)
 		}
 	}
+
+	// Update hidden indicator
+	p.updateHiddenIndicator(hiddenCount)
 
 	p.updateStatusBar()
 }
@@ -1026,12 +1284,21 @@ func (p *Popup) createTimedEventRow(event calendar.Event, now time.Time) *gtk.Bo
 	row := gtk.NewBox(gtk.OrientationHorizontalValue, 0)
 	row.AddCssClass("event-card")
 
-	// Make row clickable to show details
-	clickGesture := gtk.NewGestureClick()
-	eventCopy := event // Store for lookup
+	// Store event for lookup
+	eventCopy := event
 	p.widgetEvents[row.GoPointer()] = &eventCopy
+
+	// Make row clickable to show details (left-click)
+	clickGesture := gtk.NewGestureClick()
+	clickGesture.SetButton(1) // Left button
 	clickGesture.ConnectReleased(p.getEventRowClickCb())
 	row.AddController(&clickGesture.EventController)
+
+	// Right-click to hide event
+	rightClickGesture := gtk.NewGestureClick()
+	rightClickGesture.SetButton(3) // Right button
+	rightClickGesture.ConnectReleased(p.getEventRowRightClickCb())
+	row.AddController(&rightClickGesture.EventController)
 
 	// Time indicator
 	timeBox := p.createTimeIndicator(event, now)
@@ -1093,12 +1360,21 @@ func (p *Popup) createAllDayEventRow(event calendar.Event, now time.Time) *gtk.B
 	row := gtk.NewBox(gtk.OrientationVerticalValue, 0)
 	row.AddCssClass("all-day-row")
 
-	// Make row clickable to show details
-	clickGesture := gtk.NewGestureClick()
-	eventCopy := event // Store for lookup
+	// Store event for lookup
+	eventCopy := event
 	p.widgetEvents[row.GoPointer()] = &eventCopy
+
+	// Make row clickable to show details (left-click)
+	clickGesture := gtk.NewGestureClick()
+	clickGesture.SetButton(1) // Left button
 	clickGesture.ConnectReleased(p.getEventRowClickCb())
 	row.AddController(&clickGesture.EventController)
+
+	// Right-click to hide event
+	rightClickGesture := gtk.NewGestureClick()
+	rightClickGesture.SetButton(3) // Right button
+	rightClickGesture.ConnectReleased(p.getEventRowRightClickCb())
+	row.AddController(&rightClickGesture.EventController)
 
 	// Title
 	titleText := event.Summary
@@ -1291,7 +1567,7 @@ func (p *Popup) createJoinButton(meetingLink string) *gtk.Button {
 
 // updateStatusBar updates the status bar text.
 func (p *Popup) updateStatusBar() {
-	if p.statusBar == nil {
+	if p.statusText == nil {
 		return
 	}
 
@@ -1317,7 +1593,28 @@ func (p *Popup) updateStatusBar() {
 		text = fmt.Sprintf("%d events • Synced %s", eventCount, lastSync.Format("3:04 PM"))
 	}
 
-	p.statusBar.SetText(text)
+	p.statusText.SetText(text)
+}
+
+// updateHiddenIndicator updates the hidden events indicator in the status bar.
+func (p *Popup) updateHiddenIndicator(count int) {
+	if p.hiddenCount == nil {
+		return
+	}
+
+	if count == 0 {
+		p.hiddenCount.SetVisible(false)
+		return
+	}
+
+	var text string
+	if count == 1 {
+		text = "👁 1 hidden"
+	} else {
+		text = fmt.Sprintf("👁 %d hidden", count)
+	}
+	p.hiddenCount.SetText(text)
+	p.hiddenCount.SetVisible(true)
 }
 
 // showDetails displays the event details panel.
@@ -1436,14 +1733,180 @@ func (p *Popup) showDetails(event calendar.Event) {
 		content.Append(&btnBox.Widget)
 	}
 
+	// Hide/Unhide button (depends on whether we're viewing a hidden event)
+	actionBtnBox := gtk.NewBox(gtk.OrientationHorizontalValue, 0)
+	actionBtnBox.AddCssClass("details-action-box")
+	actionBtnBox.SetHalign(gtk.AlignCenterValue)
+
+	actionBtn := gtk.NewButton()
+	actionBtnContent := gtk.NewBox(gtk.OrientationHorizontalValue, 4)
+
+	if p.detailsFromHidden {
+		// Show Unhide button for hidden events
+		actionBtn.AddCssClass("unhide-btn")
+		unhideIcon := gtk.NewImageFromIconName("view-reveal-symbolic")
+		unhideIcon.SetPixelSize(14)
+		actionBtnContent.Append(&unhideIcon.Widget)
+		unhideLabel := gtk.NewLabel("Unhide")
+		actionBtnContent.Append(&unhideLabel.Widget)
+		actionBtn.SetChild(&actionBtnContent.Widget)
+		actionBtn.ConnectClicked(p.getUnhideClickCb())
+	} else {
+		// Show Hide button for normal events
+		actionBtn.AddCssClass("hide-btn")
+		hideIcon := gtk.NewImageFromIconName("view-conceal-symbolic")
+		hideIcon.SetPixelSize(14)
+		actionBtnContent.Append(&hideIcon.Widget)
+		hideLabel := gtk.NewLabel("Hide")
+		actionBtnContent.Append(&hideLabel.Widget)
+		actionBtn.SetChild(&actionBtnContent.Widget)
+		actionBtn.ConnectClicked(p.getHideClickCb())
+	}
+
+	actionBtnBox.Append(&actionBtn.Widget)
+	content.Append(&actionBtnBox.Widget)
+
 	// Switch to details view
 	p.stack.SetVisibleChildName("details")
 }
 
 // hideDetails returns to the event list view.
 func (p *Popup) hideDetails() {
-	p.stack.SetVisibleChildName("list")
+	if p.detailsFromHidden {
+		p.detailsFromHidden = false
+		p.stack.SetVisibleChildName("hidden")
+		// Refresh the hidden view to reflect any changes
+		p.showHiddenView()
+	} else {
+		p.stack.SetVisibleChildName("list")
+	}
 	p.detailsEvent = nil
+}
+
+// showHiddenView displays the hidden events view.
+func (p *Popup) showHiddenView() {
+	// Clear previous hidden view content
+	for child := p.hiddenView.GetFirstChild(); child != nil; child = p.hiddenView.GetFirstChild() {
+		p.hiddenView.Remove(child)
+	}
+
+	// Build header with back button
+	header := gtk.NewBox(gtk.OrientationHorizontalValue, 8)
+	header.AddCssClass("details-header")
+
+	backBtn := gtk.NewButton()
+	backBtn.SetIconName("go-previous-symbolic")
+	backBtn.AddCssClass("details-back-btn")
+	backBtn.ConnectClicked(p.getHiddenBackBtnClickCb())
+	header.Append(&backBtn.Widget)
+
+	headerTitle := gtk.NewLabel("Hidden Events")
+	headerTitle.AddCssClass("header-title")
+	headerTitle.SetHexpand(true)
+	headerTitle.SetXalign(0)
+	header.Append(&headerTitle.Widget)
+
+	p.hiddenView.Append(&header.Widget)
+
+	// Scrollable content
+	scrolled := gtk.NewScrolledWindow()
+	scrolled.SetVexpand(true)
+	scrolled.SetPolicy(gtk.PolicyNeverValue, gtk.PolicyAutomaticValue)
+	p.hiddenView.Append(&scrolled.Widget)
+
+	content := gtk.NewBox(gtk.OrientationVerticalValue, 0)
+	content.AddCssClass("hidden-events-list")
+	scrolled.SetChild(&content.Widget)
+
+	p.mu.RLock()
+	hiddenEvents := p.hiddenEvents
+	p.mu.RUnlock()
+
+	if len(hiddenEvents) == 0 {
+		// Empty state
+		emptyLabel := gtk.NewLabel("No hidden events")
+		emptyLabel.AddCssClass("empty-subtitle")
+		emptyLabel.SetVexpand(true)
+		emptyLabel.SetValign(gtk.AlignCenterValue)
+		content.Append(&emptyLabel.Widget)
+	} else {
+		// Instruction label
+		instructionLabel := gtk.NewLabel("Click an event to unhide it")
+		instructionLabel.AddCssClass("hidden-instruction")
+		content.Append(&instructionLabel.Widget)
+
+		// List hidden events
+		for _, event := range hiddenEvents {
+			row := p.createHiddenEventRow(event)
+			content.Append(&row.Widget)
+		}
+	}
+
+	p.stack.SetVisibleChildName("hidden")
+}
+
+// hideHiddenView returns to the list view.
+func (p *Popup) hideHiddenView() {
+	p.stack.SetVisibleChildName("list")
+}
+
+// createHiddenEventRow creates a row for a hidden event.
+func (p *Popup) createHiddenEventRow(event calendar.Event) *gtk.Box {
+	row := gtk.NewBox(gtk.OrientationHorizontalValue, 8)
+	row.AddCssClass("hidden-event-row")
+
+	// Store event for lookup on row
+	eventCopy := event
+	p.widgetEvents[row.GoPointer()] = &eventCopy
+
+	// Make row clickable to show details
+	clickGesture := gtk.NewGestureClick()
+	clickGesture.SetButton(1)
+	clickGesture.ConnectReleased(p.getUnhideRowClickCb())
+	row.AddController(&clickGesture.EventController)
+
+	// Event info
+	infoBox := gtk.NewBox(gtk.OrientationVerticalValue, 2)
+	infoBox.SetHexpand(true)
+	row.Append(&infoBox.Widget)
+
+	// Title
+	title := gtk.NewLabel(event.Summary)
+	title.AddCssClass("hidden-event-title")
+	title.SetXalign(0)
+	title.SetEllipsize(pango.EllipsizeEndValue)
+	title.SetMaxWidthChars(35)
+	infoBox.Append(&title.Widget)
+
+	// Time info
+	now := time.Now()
+	var timeStr string
+	if event.AllDay {
+		timeStr = "All day"
+	} else {
+		localStart := event.Start.Local()
+		dayLabel := p.getDayLabel(event.Start, now)
+		timeStr = fmt.Sprintf("%s, %s", dayLabel, localStart.Format("3:04 PM"))
+	}
+	timeLabel := gtk.NewLabel(timeStr)
+	timeLabel.AddCssClass("hidden-event-meta")
+	timeLabel.SetXalign(0)
+	infoBox.Append(&timeLabel.Widget)
+
+	// Unhide button (icon that indicates hidden state, clickable to unhide)
+	unhideBtn := gtk.NewButton()
+	unhideBtn.AddCssClass("unhide-icon-btn")
+	unhideBtn.SetIconName("view-conceal-symbolic")
+
+	// Store event on the button for lookup
+	p.widgetEvents[unhideBtn.GoPointer()] = &eventCopy
+
+	// Connect button click to unhide
+	unhideBtn.ConnectClicked(p.getUnhideBtnClickCb())
+
+	row.Append(&unhideBtn.Widget)
+
+	return row
 }
 
 // addDetailRow adds a row with icon and text to the details panel.

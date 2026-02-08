@@ -11,8 +11,8 @@ import (
 )
 
 // formatEventList formats events for the main event list menu.
-// Returns lines to display and a map of line -> event for selection handling.
-func formatEventList(events []calendar.Event, timeRange, eventEndGrace time.Duration) ([]string, map[string]*calendar.Event) {
+// Returns lines to display and a map of line index -> event for selection handling.
+func formatEventList(events, hiddenEvents []calendar.Event, timeRange, eventEndGrace time.Duration) ([]string, map[int]*calendar.Event) {
 	now := time.Now()
 	cutoff := now.Add(timeRange)
 	localNow := now.Local()
@@ -56,7 +56,7 @@ func formatEventList(events []calendar.Event, timeRange, eventEndGrace time.Dura
 	})
 
 	var lines []string
-	eventMap := make(map[string]*calendar.Event)
+	eventMap := make(map[int]*calendar.Event)
 	var lastDay string
 
 	// Add timed events with day separators
@@ -69,8 +69,9 @@ func formatEventList(events []calendar.Event, timeRange, eventEndGrace time.Dura
 		}
 
 		line := formatEventLine(e, now)
+		lineIdx := len(lines)
 		lines = append(lines, line)
-		eventMap[line] = e
+		eventMap[lineIdx] = e
 	}
 
 	// Add all-day events section
@@ -86,14 +87,25 @@ func formatEventList(events []calendar.Event, timeRange, eventEndGrace time.Dura
 			if e.Source != "" {
 				line += fmt.Sprintf(" (%s)", e.Source)
 			}
+			lineIdx := len(lines)
 			lines = append(lines, line)
-			eventMap[line] = e
+			eventMap[lineIdx] = e
 		}
 	}
 
 	// Empty state
 	if len(lines) == 0 {
 		lines = append(lines, "No upcoming events")
+	}
+
+	// Add hidden events indicator if any
+	if len(hiddenEvents) > 0 {
+		lines = append(lines, "")
+		if len(hiddenEvents) == 1 {
+			lines = append(lines, "👁 1 hidden event")
+		} else {
+			lines = append(lines, fmt.Sprintf("👁 %d hidden events", len(hiddenEvents)))
+		}
 	}
 
 	return lines, eventMap
@@ -178,8 +190,9 @@ func formatEventDetails(e *calendar.Event) ([]string, map[string]string) {
 		}
 	}
 
-	// Back option
+	// Actions
 	lines = append(lines, "")
+	lines = append(lines, "🚫 Hide this event")
 	lines = append(lines, "← Back")
 
 	return lines, urlMap
@@ -231,4 +244,52 @@ func isSeparator(line string) bool {
 // isBackAction returns true if the line is the "Back" action.
 func isBackAction(line string) bool {
 	return line == "← Back"
+}
+
+// isHideAction returns true if the line is the "Hide" action.
+func isHideAction(line string) bool {
+	return line == "🚫 Hide this event" || strings.Contains(line, "Hide this event")
+}
+
+// isHiddenIndicator returns true if the line is the hidden events indicator.
+func isHiddenIndicator(line string) bool {
+	return strings.HasPrefix(line, "👁 ") && strings.Contains(line, "hidden event")
+}
+
+// formatHiddenEvents formats hidden events for the unhide menu.
+// Returns lines to display and a map of line -> event for selection handling.
+func formatHiddenEvents(hiddenEvents []calendar.Event) ([]string, map[string]*calendar.Event) {
+	var lines []string
+	eventMap := make(map[string]*calendar.Event)
+	now := time.Now()
+
+	lines = append(lines, "━━━━ Hidden Events ━━━━")
+	lines = append(lines, "Click to unhide:")
+	lines = append(lines, "")
+
+	for i := range hiddenEvents {
+		e := &hiddenEvents[i]
+		line := formatHiddenEventLine(e, now)
+		lines = append(lines, line)
+		eventMap[line] = e
+	}
+
+	lines = append(lines, "")
+	lines = append(lines, "← Back")
+
+	return lines, eventMap
+}
+
+// formatHiddenEventLine formats a single hidden event for the list.
+func formatHiddenEventLine(e *calendar.Event, now time.Time) string {
+	var timeStr string
+	if e.AllDay {
+		timeStr = "All day"
+	} else {
+		localStart := e.Start.Local()
+		dayLabel := getDayLabel(e.Start, now)
+		timeStr = fmt.Sprintf("%s %s", dayLabel, localStart.Format("15:04"))
+	}
+
+	return fmt.Sprintf("  %s - %s", timeStr, e.Summary)
 }

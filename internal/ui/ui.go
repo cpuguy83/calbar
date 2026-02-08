@@ -24,11 +24,20 @@ type UI interface {
 	// SetEvents updates the event list.
 	SetEvents(events []calendar.Event)
 
+	// SetHiddenEvents updates the list of hidden events.
+	SetHiddenEvents(events []calendar.Event)
+
 	// SetStale marks the data as potentially stale.
 	SetStale(stale bool)
 
 	// OnAction sets the callback for when a user performs an action.
 	OnAction(fn func(Action))
+
+	// OnHide sets the callback for when the user hides an event.
+	OnHide(fn func(uid string))
+
+	// OnUnhide sets the callback for when the user unhides an event.
+	OnUnhide(fn func(uid string))
 }
 
 // Action represents a user action from the UI.

@@ -198,7 +198,7 @@ func (s *MS365Source) fetchCalendarView(ctx context.Context, accessToken string,
 	params.Set("$orderby", "start/dateTime")
 	params.Set("$top", "500") // Fetch up to 500 events
 	// Request specific fields to get full details including body
-	params.Set("$select", "id,subject,bodyPreview,body,start,end,location,isAllDay,isCancelled,organizer,webLink,onlineMeetingUrl,onlineMeeting,showAs,responseStatus")
+	params.Set("$select", "id,subject,bodyPreview,body,start,end,location,isAllDay,isCancelled,organizer,webLink,onlineMeetingUrl,onlineMeeting,showAs,responseStatus,seriesMasterId,recurrence")
 
 	reqURL := graphCalendarEndpoint + "?" + params.Encode()
 
@@ -268,19 +268,33 @@ func (s *MS365Source) fetchPage(ctx context.Context, accessToken, reqURL string)
 // convertEvent converts a Graph API event to our Event type.
 func (s *MS365Source) convertEvent(ge graphEvent) (Event, error) {
 	event := Event{
-		UID:     ge.ID,
 		Summary: ge.Subject,
 		Source:  s.name,
 		AllDay:  ge.IsAllDay,
 		URL:     ge.WebLink,
 	}
 
-	// Parse start time
+	// Parse start time first - needed for UID
 	start, err := parseGraphDateTime(ge.Start)
 	if err != nil {
 		return event, fmt.Errorf("parse start: %w", err)
 	}
 	event.Start = start
+
+	// Build a stable UID for the event instance.
+	// For recurring events, use seriesMasterId + start time (seriesMasterId is stable).
+	// For non-recurring, use subject + source + start time as a stable key.
+	// The Graph API 'id' and 'iCalUId' both change between fetches for recurring instances.
+	if ge.SeriesMasterID != "" {
+		// Recurring event instance
+		event.UID = fmt.Sprintf("%s_%d", ge.SeriesMasterID, start.Unix())
+	} else if ge.Recurrence != nil {
+		// Series master (the recurring event definition itself)
+		event.UID = fmt.Sprintf("%s_%d", ge.ID, start.Unix())
+	} else {
+		// Non-recurring event - use subject + start as stable identifier
+		event.UID = fmt.Sprintf("%s_%s_%d", s.name, ge.Subject, start.Unix())
+	}
 
 	// Parse end time
 	end, err := parseGraphDateTime(ge.End)

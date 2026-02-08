@@ -41,3 +41,12 @@ func (g *GTK) SetStale(stale bool) {}
 
 // OnAction is a no-op stub.
 func (g *GTK) OnAction(fn func(Action)) {}
+
+// OnHide is a no-op stub.
+func (g *GTK) OnHide(fn func(uid string)) {}
+
+// OnUnhide is a no-op stub.
+func (g *GTK) OnUnhide(fn func(uid string)) {}
+
+// SetHiddenEvents is a no-op stub.
+func (g *GTK) SetHiddenEvents(events []calendar.Event) {}

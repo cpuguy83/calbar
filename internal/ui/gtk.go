@@ -72,3 +72,18 @@ func (g *GTK) SetStale(stale bool) {
 func (g *GTK) OnAction(fn func(Action)) {
 	g.onAction = fn
 }
+
+// OnHide sets the callback for when the user hides an event.
+func (g *GTK) OnHide(fn func(uid string)) {
+	g.popup.OnHide(fn)
+}
+
+// OnUnhide sets the callback for when the user unhides an event.
+func (g *GTK) OnUnhide(fn func(uid string)) {
+	g.popup.OnUnhide(fn)
+}
+
+// SetHiddenEvents updates the list of hidden events.
+func (g *GTK) SetHiddenEvents(events []calendar.Event) {
+	g.popup.SetHiddenEvents(events)
+}

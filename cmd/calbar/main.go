@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"slices"
 	gosync "sync"
 	"time"
 
@@ -19,6 +20,12 @@ import (
 	"github.com/cpuguy83/calbar/internal/ui"
 	"github.com/cpuguy83/calbar/internal/ui/menu"
 )
+
+// hiddenEntry tracks a hidden event UID and when it was hidden.
+type hiddenEntry struct {
+	uid    string
+	hidden time.Time
+}
 
 func main() {
 	var (
@@ -78,10 +85,11 @@ type App struct {
 	notifier      *notify.Notifier
 	syncer        *sync.Syncer
 
-	mu          gosync.RWMutex
-	events      []calendar.Event
-	lastSync    time.Time
-	lastSyncErr error
+	mu            gosync.RWMutex
+	events        []calendar.Event
+	hiddenEntries []hiddenEntry // UIDs hidden by user, sorted by hide time (oldest first)
+	lastSync      time.Time
+	lastSyncErr   error
 
 	// Notification tracking
 	notifiedEvents  map[string]time.Time
@@ -183,6 +191,16 @@ func (a *App) activate() error {
 		}
 	})
 
+	// Set up hide handler
+	a.ui.OnHide(func(uid string) {
+		a.hideEvent(uid)
+	})
+
+	// Set up unhide handler
+	a.ui.OnUnhide(func(uid string) {
+		a.unhideEvent(uid)
+	})
+
 	// Set tray click handler to toggle UI
 	a.tray.OnActivate(func() {
 		slog.Debug("tray activated, toggling UI")
@@ -242,6 +260,114 @@ func (a *App) cleanup() {
 	}
 }
 
+// hideEvent hides an event by UID (ephemeral, until restart).
+func (a *App) hideEvent(uid string) {
+	a.mu.Lock()
+	// Check if already hidden to avoid duplicates
+	alreadyHidden := false
+	for _, e := range a.hiddenEntries {
+		if e.uid == uid {
+			alreadyHidden = true
+			break
+		}
+	}
+	if !alreadyHidden {
+		a.hiddenEntries = append(a.hiddenEntries, hiddenEntry{uid: uid, hidden: time.Now()})
+	}
+	a.gcHiddenEntries()
+	a.mu.Unlock()
+
+	slog.Debug("event hidden", "uid", uid)
+	a.scheduleUIUpdate()
+}
+
+// unhideEvent removes an event from the hidden list.
+func (a *App) unhideEvent(uid string) {
+	a.mu.Lock()
+	a.hiddenEntries = slices.DeleteFunc(a.hiddenEntries, func(e hiddenEntry) bool {
+		return e.uid == uid
+	})
+	a.gcHiddenEntries()
+	a.mu.Unlock()
+
+	slog.Debug("event unhidden", "uid", uid)
+	a.scheduleUIUpdate()
+}
+
+// visibleEvents returns events that are not hidden by the user.
+// Must be called with at least RLock held.
+func (a *App) visibleEvents() []calendar.Event {
+	if len(a.hiddenEntries) == 0 {
+		return a.events
+	}
+	// Build a set of hidden UIDs for O(1) lookup
+	hiddenSet := make(map[string]struct{}, len(a.hiddenEntries))
+	for _, h := range a.hiddenEntries {
+		hiddenSet[h.uid] = struct{}{}
+	}
+	visible := make([]calendar.Event, 0, len(a.events))
+	for _, e := range a.events {
+		if _, hidden := hiddenSet[e.UID]; !hidden {
+			visible = append(visible, e)
+		}
+	}
+	return visible
+}
+
+// hiddenEvents returns events that are hidden by the user, sorted by hide time (most recent first).
+// Must be called with at least RLock held.
+func (a *App) hiddenEvents() []calendar.Event {
+	if len(a.hiddenEntries) == 0 {
+		return nil
+	}
+
+	// Build a map of UID -> event for quick lookup
+	eventByUID := make(map[string]calendar.Event, len(a.events))
+	for _, e := range a.events {
+		eventByUID[e.UID] = e
+	}
+
+	// Iterate in reverse order (newest first) since slice is sorted oldest-first
+	var result []calendar.Event
+	for _, entry := range slices.Backward(a.hiddenEntries) {
+		if e, ok := eventByUID[entry.uid]; ok {
+			result = append(result, e)
+		}
+	}
+	return result
+}
+
+// gcHiddenEntries removes hidden entries for events that are no longer visible
+// (either removed by sync or past their end time + grace period).
+// Must be called with Lock held.
+func (a *App) gcHiddenEntries() {
+	if len(a.hiddenEntries) == 0 {
+		return
+	}
+
+	// Build a map of UID -> event for quick lookup
+	eventByUID := make(map[string]calendar.Event, len(a.events))
+	for _, e := range a.events {
+		eventByUID[e.UID] = e
+	}
+
+	now := time.Now()
+	eventEndGrace := a.cfg.UI.EventEndGrace
+
+	a.hiddenEntries = slices.DeleteFunc(a.hiddenEntries, func(h hiddenEntry) bool {
+		e, exists := eventByUID[h.uid]
+		if !exists {
+			// Event no longer in sync results
+			return true
+		}
+		if e.End.Add(eventEndGrace).Before(now) {
+			// Event has ended
+			return true
+		}
+		return false
+	})
+}
+
 // onSyncComplete is called after each sync completes.
 func (a *App) onSyncComplete(events []calendar.Event, failedSources []string, err error) {
 	a.mu.Lock()
@@ -289,13 +415,15 @@ func (a *App) onSyncComplete(events []calendar.Event, failedSources []string, er
 // updateUI updates the UI and tray based on current state.
 func (a *App) updateUI() {
 	a.mu.RLock()
-	events := a.events
+	events := a.visibleEvents()
+	hidden := a.hiddenEvents()
 	lastSync := a.lastSync
 	lastSyncErr := a.lastSyncErr
 	a.mu.RUnlock()
 
 	// Update UI with events
 	a.ui.SetEvents(events)
+	a.ui.SetHiddenEvents(hidden)
 
 	// Update stale state
 	isStale := lastSyncErr != nil || time.Since(lastSync) > 2*a.syncer.Interval()
@@ -316,7 +444,7 @@ func (a *App) updateUI() {
 // updateTrayState updates the tray icon based on upcoming events.
 func (a *App) updateTrayState() {
 	a.mu.RLock()
-	events := a.events
+	events := a.visibleEvents()
 	a.mu.RUnlock()
 
 	now := time.Now()
@@ -341,7 +469,7 @@ func (a *App) updateTrayState() {
 // updateTrayTooltip updates the tray tooltip with the next event.
 func (a *App) updateTrayTooltip() {
 	a.mu.RLock()
-	events := a.events
+	events := a.visibleEvents()
 	a.mu.RUnlock()
 
 	now := time.Now()
@@ -402,7 +530,7 @@ func (a *App) checkNotifications() {
 	}
 
 	a.mu.RLock()
-	events := a.events
+	events := a.visibleEvents()
 	a.mu.RUnlock()
 
 	now := time.Now()
