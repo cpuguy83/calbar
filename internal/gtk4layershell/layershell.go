@@ -42,13 +42,14 @@ const (
 
 // Function pointers populated via dlopen
 var (
-	xIsSupported     func() bool
-	xInitForWindow   func(uintptr)
-	xSetLayer        func(uintptr, int)
-	xSetAnchor       func(uintptr, int, bool)
-	xSetMargin       func(uintptr, int, int)
-	xSetKeyboardMode func(uintptr, int)
-	xSetNamespace    func(uintptr, string)
+	xIsSupported      func() bool
+	xInitForWindow    func(uintptr)
+	xSetLayer         func(uintptr, int)
+	xSetAnchor        func(uintptr, int, bool)
+	xSetMargin        func(uintptr, int, int)
+	xSetKeyboardMode  func(uintptr, int)
+	xSetNamespace     func(uintptr, string)
+	xSetExclusiveZone func(uintptr, int)
 )
 
 // IsSupported returns true if the compositor supports the layer shell protocol.
@@ -85,6 +86,13 @@ func SetKeyboardMode(window uintptr, mode KeyboardMode) {
 // SetNamespace sets the namespace for the layer surface.
 func SetNamespace(window uintptr, namespace string) {
 	xSetNamespace(window, namespace)
+}
+
+// SetExclusiveZone sets the exclusive zone for the layer surface.
+// A value of -1 means the surface should not be moved to accommodate
+// other layer surfaces and should overlap everything.
+func SetExclusiveZone(window uintptr, zone int) {
+	xSetExclusiveZone(window, zone)
 }
 
 func registerFunc(lib uintptr, fptr any, name string) {
@@ -127,4 +135,5 @@ func init() {
 	registerFunc(lib, &xSetMargin, "gtk_layer_set_margin")
 	registerFunc(lib, &xSetKeyboardMode, "gtk_layer_set_keyboard_mode")
 	registerFunc(lib, &xSetNamespace, "gtk_layer_set_namespace")
+	registerFunc(lib, &xSetExclusiveZone, "gtk_layer_set_exclusive_zone")
 }

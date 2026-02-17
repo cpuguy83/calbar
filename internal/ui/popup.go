@@ -18,7 +18,7 @@ import (
 	"github.com/jwijenbergh/puregotk/v4/adw"
 	"github.com/jwijenbergh/puregotk/v4/gdk"
 	"github.com/jwijenbergh/puregotk/v4/glib"
-	"github.com/jwijenbergh/puregotk/v4/gobject"
+	"github.com/jwijenbergh/puregotk/v4/graphene"
 	"github.com/jwijenbergh/puregotk/v4/gtk"
 	"github.com/jwijenbergh/puregotk/v4/pango"
 )
@@ -92,6 +92,11 @@ type Popup struct {
 	hideCb                 stableCallback[glib.SourceFunc]
 	toggleCb               stableCallback[glib.SourceFunc]
 	dismissTimerCb         stableCallback[glib.SourceFunc]
+	clickOutsidePressedCb  stableCallback[func(gtk.GestureClick, int, float64, float64)]
+	clickOutsideReleasedCb stableCallback[func(gtk.GestureClick, int, float64, float64)]
+
+	// State for click-outside detection (accessed only from GTK main thread)
+	clickOutsideContent bool
 
 	// Widget -> data lookup for stable callbacks (accessed only from GTK main thread)
 	widgetEvents map[uintptr]*calendar.Event
@@ -310,12 +315,43 @@ func (p *Popup) getDismissTimerCb() *glib.SourceFunc {
 			p.mu.RLock()
 			pointerInside := p.pointerInside
 			p.mu.RUnlock()
-			// Double-check: only dismiss if still not active and pointer still outside
-			if p.window.IsVisible() && !p.window.IsActive() && !pointerInside {
+			// Only dismiss if pointer is still outside the content
+			if p.window.IsVisible() && !pointerInside {
 				p.hideAll()
 			}
 			p.dismissTimer = 0
 			return false
+		}
+	})
+}
+
+func (p *Popup) getClickOutsidePressedCb() *func(gtk.GestureClick, int, float64, float64) {
+	return p.clickOutsidePressedCb.get(func() func(gtk.GestureClick, int, float64, float64) {
+		return func(gesture gtk.GestureClick, nPress int, x, y float64) {
+			// Hit-test: check if the click is inside the content widget
+			bounds := graphene.RectAlloc()
+			point := graphene.PointAlloc()
+			point.Init(float32(x), float32(y))
+
+			if p.content.ComputeBounds(&p.window.Widget, bounds) {
+				p.clickOutsideContent = !bounds.ContainsPoint(point)
+			} else {
+				// Can't compute bounds - treat as outside to be safe
+				p.clickOutsideContent = true
+			}
+			slog.Debug("click-outside pressed", "x", x, "y", y, "outside", p.clickOutsideContent)
+		}
+	})
+}
+
+func (p *Popup) getClickOutsideReleasedCb() *func(gtk.GestureClick, int, float64, float64) {
+	return p.clickOutsideReleasedCb.get(func() func(gtk.GestureClick, int, float64, float64) {
+		return func(gesture gtk.GestureClick, nPress int, x, y float64) {
+			if p.clickOutsideContent {
+				slog.Debug("click-outside released, dismissing")
+				p.clickOutsideContent = false
+				p.hideAll()
+			}
 		}
 	})
 }
@@ -341,75 +377,25 @@ func (p *Popup) Init() {
 
 	p.window = gtk.NewWindow()
 	p.window.SetTitle("CalBar")
-	p.window.SetDefaultSize(380, 580)
 
-	// Layer shell setup for Wayland compositors
+	// Layer shell setup for Wayland compositors.
+	// We make the window fullscreen (anchor all 4 edges, exclusive_zone=-1)
+	// so it acts as a transparent overlay. The actual popup content is placed
+	// in the top-right corner via alignment. Clicks on the transparent area
+	// outside the content widget dismiss the popup (swaync-style).
 	if gtk4layershell.IsSupported() {
 		slog.Debug("layer shell supported")
 		winPtr := p.window.GoPointer()
 		gtk4layershell.InitForWindow(winPtr)
 		gtk4layershell.SetLayer(winPtr, gtk4layershell.LayerTop)
 		gtk4layershell.SetAnchor(winPtr, gtk4layershell.EdgeTop, true)
+		gtk4layershell.SetAnchor(winPtr, gtk4layershell.EdgeBottom, true)
+		gtk4layershell.SetAnchor(winPtr, gtk4layershell.EdgeLeft, true)
 		gtk4layershell.SetAnchor(winPtr, gtk4layershell.EdgeRight, true)
-		gtk4layershell.SetMargin(winPtr, gtk4layershell.EdgeTop, 8)
-		gtk4layershell.SetMargin(winPtr, gtk4layershell.EdgeRight, 8)
+		gtk4layershell.SetExclusiveZone(winPtr, 0)
 		gtk4layershell.SetKeyboardMode(winPtr, gtk4layershell.KeyboardModeOnDemand)
 		gtk4layershell.SetNamespace(winPtr, "calbar-popup")
 		p.window.SetDecorated(false)
-
-		// Auto-dismiss on focus loss (unless disabled by hover_dismiss_delay: 0)
-		if p.hoverDismissDelay != 0 {
-			// Connect to notify::is-active signal
-			notifyCb := func(obj gobject.Object, pspec uintptr) {
-				if p.window.IsVisible() {
-					if p.window.IsActive() {
-						if p.dismissTimer != 0 {
-							glib.SourceRemove(p.dismissTimer)
-							p.dismissTimer = 0
-						}
-					} else {
-						p.mu.RLock()
-						loading := p.loading
-						pointerInside := p.pointerInside
-						p.mu.RUnlock()
-						// Short delay (100ms) to avoid race when window is first shown
-						// (property notifications fire before the window gains focus).
-						// getDismissTimerCb re-checks all conditions before dismissing.
-						if !loading && !pointerInside && p.dismissTimer == 0 {
-							p.dismissTimer = glib.TimeoutAdd(100, p.getDismissTimerCb(), 0)
-						}
-					}
-				}
-			}
-			p.window.ConnectNotify(&notifyCb)
-
-			// Track pointer enter/leave for smart dismiss behavior
-			motionController := gtk.NewEventControllerMotion()
-			enterCb := func(ctrl gtk.EventControllerMotion, x, y float64) {
-				slog.Debug("pointer entered popup", "x", x, "y", y)
-				p.mu.Lock()
-				p.pointerInside = true
-				p.mu.Unlock()
-				// Cancel any pending dismiss
-				if p.dismissTimer != 0 {
-					glib.SourceRemove(p.dismissTimer)
-					p.dismissTimer = 0
-				}
-			}
-			leaveCb := func(ctrl gtk.EventControllerMotion) {
-				slog.Debug("pointer left popup")
-				p.mu.Lock()
-				p.pointerInside = false
-				p.mu.Unlock()
-				// If window not active and pointer left, start dismiss timer
-				if p.window.IsVisible() && !p.window.IsActive() {
-					p.startDismissTimer()
-				}
-			}
-			motionController.ConnectEnter(&enterCb)
-			motionController.ConnectLeave(&leaveCb)
-			p.window.AddController(&motionController.EventController)
-		}
 	}
 
 	// Hide on close request
@@ -443,11 +429,60 @@ func (p *Popup) Init() {
 }
 
 // buildUI constructs the widget hierarchy.
+// The window is fullscreen (transparent overlay). The actual popup content
+// is placed in the top-right corner via an alignment wrapper.
 func (p *Popup) buildUI() {
-	// Main container
+	// Alignment wrapper: pushes content to top-right corner of the fullscreen surface
+	wrapper := gtk.NewBox(gtk.OrientationVerticalValue, 0)
+	wrapper.AddCssClass("popup-overlay")
+	wrapper.SetHalign(gtk.AlignEndValue)
+	wrapper.SetValign(gtk.AlignStartValue)
+	// Margins from the screen edge
+	wrapper.SetMarginTop(8)
+	wrapper.SetMarginEnd(8)
+	p.window.SetChild(&wrapper.Widget)
+
+	// Main container (the visible popup)
 	p.content = gtk.NewBox(gtk.OrientationVerticalValue, 0)
 	p.content.AddCssClass("popup-container")
-	p.window.SetChild(&p.content.Widget)
+	p.content.SetSizeRequest(380, 580)
+	wrapper.Append(&p.content.Widget)
+
+	// Click-outside-to-dismiss: a gesture on the window detects clicks
+	// outside the content area using hit-testing with ComputeBounds.
+	clickOutside := gtk.NewGestureClick()
+	clickOutside.ConnectPressed(p.getClickOutsidePressedCb())
+	clickOutside.ConnectReleased(p.getClickOutsideReleasedCb())
+	p.window.AddController(&clickOutside.EventController)
+
+	// Hover dismiss: track pointer enter/leave on the content widget.
+	// When the pointer leaves the content, start the dismiss timer.
+	if p.hoverDismissDelay != 0 {
+		motionController := gtk.NewEventControllerMotion()
+		enterCb := func(ctrl gtk.EventControllerMotion, x, y float64) {
+			slog.Debug("pointer entered popup content", "x", x, "y", y)
+			p.mu.Lock()
+			p.pointerInside = true
+			p.mu.Unlock()
+			// Cancel any pending dismiss
+			if p.dismissTimer != 0 {
+				glib.SourceRemove(p.dismissTimer)
+				p.dismissTimer = 0
+			}
+		}
+		leaveCb := func(ctrl gtk.EventControllerMotion) {
+			slog.Debug("pointer left popup content")
+			p.mu.Lock()
+			p.pointerInside = false
+			p.mu.Unlock()
+			if p.window.IsVisible() {
+				p.startDismissTimer()
+			}
+		}
+		motionController.ConnectEnter(&enterCb)
+		motionController.ConnectLeave(&leaveCb)
+		p.content.AddController(&motionController.EventController)
+	}
 
 	// Stack for switching between list and details views
 	p.stack = gtk.NewStack()
@@ -536,7 +571,16 @@ func (p *Popup) buildHeader() *gtk.Box {
 // applyCSS applies custom styling with libadwaita color variables.
 func (p *Popup) applyCSS() {
 	css := `
-		/* Main container */
+		/* Fullscreen overlay: transparent background, no decoration */
+		window {
+			background: transparent;
+		}
+
+		.popup-overlay {
+			background: transparent;
+		}
+
+		/* Main container (the visible popup in the top-right corner) */
 		.popup-container {
 			background: @window_bg_color;
 			border-radius: 12px;
