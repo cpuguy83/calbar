@@ -1137,12 +1137,16 @@ func (p *Popup) updateList() {
 			continue
 		}
 
-		if e.AllDay {
+		if e.AllDay || e.Duration() >= 24*time.Hour {
 			// Only include all-day events that span today (compare in local time)
 			localStart := e.Start.Local()
 			localEnd := e.End.Local()
 			eventStart := time.Date(localStart.Year(), localStart.Month(), localStart.Day(), 0, 0, 0, 0, time.Local)
 			eventEnd := time.Date(localEnd.Year(), localEnd.Month(), localEnd.Day(), 0, 0, 0, 0, time.Local)
+			if localEnd.Hour() != 0 || localEnd.Minute() != 0 || localEnd.Second() != 0 {
+				// End time is not midnight, so it extends into the next day
+				eventEnd = eventEnd.Add(24 * time.Hour)
+			}
 			if !today.Before(eventStart) && today.Before(eventEnd) {
 				allDayEvents = append(allDayEvents, e)
 			}
@@ -1439,9 +1443,18 @@ func (p *Popup) createAllDayEventRow(event calendar.Event, now time.Time) *gtk.B
 
 	// Meta: date range + source
 	var metaParts []string
-	dateRange := p.formatDateRange(event, now)
-	if dateRange != "" {
-		metaParts = append(metaParts, dateRange)
+	if event.AllDay {
+		dateRange := p.formatDateRange(event, now)
+		if dateRange != "" {
+			metaParts = append(metaParts, dateRange)
+		}
+	} else {
+		// Long-duration timed event in all-day section — show actual time range
+		startDay := p.getDayLabel(event.Start, now)
+		endDay := p.getDayLabel(event.End, now)
+		localStart := event.Start.Local()
+		localEnd := event.End.Local()
+		metaParts = append(metaParts, fmt.Sprintf("%s %s – %s %s", startDay, localStart.Format("3:04 PM"), endDay, localEnd.Format("3:04 PM")))
 	}
 	if event.Source != "" {
 		metaParts = append(metaParts, event.Source)
@@ -1717,6 +1730,11 @@ func (p *Popup) showDetails(event calendar.Event) {
 	var timeStr string
 	if event.AllDay {
 		timeStr = p.formatDateRange(event, now)
+	} else if event.Duration() >= 24*time.Hour {
+		// Long-duration event shown in all-day section
+		startDay := p.getDayLabel(event.Start, now)
+		endDay := p.getDayLabel(event.End, now)
+		timeStr = fmt.Sprintf("%s %s – %s %s", startDay, localStart.Format("3:04 PM"), endDay, localEnd.Format("3:04 PM"))
 	} else {
 		dayLabel := p.getDayLabel(event.Start, now)
 		timeStr = fmt.Sprintf("%s • %s – %s", dayLabel, localStart.Format("3:04 PM"), localEnd.Format("3:04 PM"))
@@ -1724,7 +1742,7 @@ func (p *Popup) showDetails(event calendar.Event) {
 	p.addDetailRow(content, "📅", timeStr)
 
 	// Duration (for non-all-day events)
-	if !event.AllDay {
+	if !event.AllDay && event.Duration() < 24*time.Hour {
 		duration := p.getEventDuration(event)
 		p.addDetailRow(content, "⏱", duration)
 	}

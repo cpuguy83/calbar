@@ -337,6 +337,11 @@ func (s *MS365Source) convertEvent(ge graphEvent) (Event, error) {
 		}
 	}
 
+	// Detect effectively all-day events (midnight-to-midnight datetime encoding)
+	if !event.AllDay && isEffectivelyAllDay(event.Start, event.End) {
+		event.AllDay = true
+	}
+
 	return event, nil
 }
 

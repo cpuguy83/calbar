@@ -63,6 +63,21 @@ func (e *Event) StartsIn(now time.Time) time.Duration {
 	return e.Start.Sub(now)
 }
 
+// isEffectivelyAllDay returns true if start and end are both at midnight in local
+// time and the event spans at least one full day. This detects multi-day events
+// encoded with full datetime values (e.g. iCloud CalDAV) rather than date-only values.
+func isEffectivelyAllDay(start, end time.Time) bool {
+	s := start.Local()
+	e := end.Local()
+	if s.Hour() != 0 || s.Minute() != 0 || s.Second() != 0 {
+		return false
+	}
+	if e.Hour() != 0 || e.Minute() != 0 || e.Second() != 0 {
+		return false
+	}
+	return e.After(s)
+}
+
 // Source is the interface that calendar sources must implement.
 type Source interface {
 	// Name returns the display name of this calendar source.

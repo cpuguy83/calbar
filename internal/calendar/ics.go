@@ -200,7 +200,7 @@ func (s *ICSSource) parseEvent(comp *ics.Component) ([]Event, error) {
 		// Non-recurring event
 		base.Start = startTime
 		base.End = startTime.Add(duration)
-		base.AllDay = isAllDay
+		base.AllDay = isAllDay || isEffectivelyAllDay(base.Start, base.End)
 		return []Event{base}, nil
 	}
 
@@ -217,7 +217,7 @@ func (s *ICSSource) parseEvent(comp *ics.Component) ([]Event, error) {
 		event := base // Copy base event
 		event.Start = occ
 		event.End = occ.Add(duration)
-		event.AllDay = isAllDay
+		event.AllDay = isAllDay || isEffectivelyAllDay(event.Start, event.End)
 		// Make UID unique per occurrence
 		event.UID = fmt.Sprintf("%s_%d", base.UID, occ.Unix())
 		events = append(events, event)

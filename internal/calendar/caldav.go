@@ -257,6 +257,11 @@ func (s *CalDAVSource) parseEventComponent(comp *ics.Component, calName string) 
 		event.End = event.Start.Add(time.Hour)
 	}
 
+	// Detect effectively all-day events (midnight-to-midnight datetime encoding)
+	if !event.AllDay && isEffectivelyAllDay(event.Start, event.End) {
+		event.AllDay = true
+	}
+
 	return event, nil
 }
 

@@ -219,6 +219,11 @@ func parseEventComponent(comp *ics.Component) (Event, error) {
 		event.End = event.Start.Add(time.Hour)
 	}
 
+	// Detect effectively all-day events (midnight-to-midnight datetime encoding)
+	if !event.AllDay && isEffectivelyAllDay(event.Start, event.End) {
+		event.AllDay = true
+	}
+
 	return event, nil
 }
 

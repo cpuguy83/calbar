@@ -31,12 +31,16 @@ func formatEventList(events, hiddenEvents []calendar.Event, timeRange, eventEndG
 			continue
 		}
 
-		if e.AllDay {
+		if e.AllDay || e.Duration() >= 24*time.Hour {
 			// Only include all-day events that span today
 			localStart := e.Start.Local()
 			localEnd := e.End.Local()
 			eventStart := time.Date(localStart.Year(), localStart.Month(), localStart.Day(), 0, 0, 0, 0, time.Local)
 			eventEnd := time.Date(localEnd.Year(), localEnd.Month(), localEnd.Day(), 0, 0, 0, 0, time.Local)
+			if localEnd.Hour() != 0 || localEnd.Minute() != 0 || localEnd.Second() != 0 {
+				// End time is not midnight, so it extends into the next day
+				eventEnd = eventEnd.Add(24 * time.Hour)
+			}
 			if !today.Before(eventStart) && today.Before(eventEnd) {
 				allDayEvents = append(allDayEvents, e)
 			}
@@ -84,6 +88,16 @@ func formatEventList(events, hiddenEvents []calendar.Event, timeRange, eventEndG
 				prefix = "⚠ "
 			}
 			line := fmt.Sprintf("%s%s", prefix, e.Summary)
+			if e.AllDay {
+				if dateRange := formatAllDayRange(e, now); dateRange != "" {
+					line += fmt.Sprintf(" [%s]", dateRange)
+				}
+			} else {
+				// Long-duration timed event — show actual time range
+				startDay := getDayLabel(e.Start, now)
+				endDay := getDayLabel(e.End, now)
+				line += fmt.Sprintf(" [%s %s – %s %s]", startDay, e.Start.Local().Format("15:04"), endDay, e.End.Local().Format("15:04"))
+			}
 			if e.Source != "" {
 				line += fmt.Sprintf(" (%s)", e.Source)
 			}
@@ -155,7 +169,16 @@ func formatEventDetails(e *calendar.Event) ([]string, map[string]string) {
 
 	// Time info
 	if e.AllDay {
-		lines = append(lines, fmt.Sprintf("  All Day"))
+		if dateRange := formatAllDayRange(e, now); dateRange != "" {
+			lines = append(lines, fmt.Sprintf("  All Day (%s)", dateRange))
+		} else {
+			lines = append(lines, fmt.Sprintf("  All Day"))
+		}
+	} else if e.Duration() >= 24*time.Hour {
+		// Long-duration event shown in all-day section
+		startLabel := getDayLabel(e.Start, now)
+		endLabel := getDayLabel(e.End, now)
+		lines = append(lines, fmt.Sprintf("  %s %s – %s %s", startLabel, localStart.Format("15:04"), endLabel, localEnd.Format("15:04")))
 	} else {
 		dayLabel := getDayLabel(e.Start, now)
 		timeRange := fmt.Sprintf("%s - %s", localStart.Format("15:04"), localEnd.Format("15:04"))
@@ -228,6 +251,25 @@ func formatDuration(d time.Duration) string {
 	return fmt.Sprintf("%.1fh", hours)
 }
 
+// formatAllDayRange returns a date range string for multi-day all-day events.
+// For single-day events it returns "". For multi-day events it returns
+// something like "Feb 17 – Feb 21" using the start and the last day (end - 1 day,
+// since all-day end dates are exclusive in iCalendar).
+func formatAllDayRange(e *calendar.Event, now time.Time) string {
+	// All-day end dates are exclusive, so the last visible day is end - 1 day
+	lastDay := e.End.Add(-24 * time.Hour)
+	startDay := time.Date(e.Start.Local().Year(), e.Start.Local().Month(), e.Start.Local().Day(), 0, 0, 0, 0, time.Local)
+	endDay := time.Date(lastDay.Local().Year(), lastDay.Local().Month(), lastDay.Local().Day(), 0, 0, 0, 0, time.Local)
+
+	if !endDay.After(startDay) {
+		return ""
+	}
+
+	startLabel := getDayLabel(e.Start, now)
+	endLabel := getDayLabel(lastDay, now)
+	return fmt.Sprintf("%s – %s", startLabel, endLabel)
+}
+
 // truncate truncates a string to maxLen, adding "..." if truncated.
 func truncate(s string, maxLen int) string {
 	if len(s) <= maxLen {
@@ -284,7 +326,11 @@ func formatHiddenEvents(hiddenEvents []calendar.Event) ([]string, map[string]*ca
 func formatHiddenEventLine(e *calendar.Event, now time.Time) string {
 	var timeStr string
 	if e.AllDay {
-		timeStr = "All day"
+		if dateRange := formatAllDayRange(e, now); dateRange != "" {
+			timeStr = fmt.Sprintf("All day (%s)", dateRange)
+		} else {
+			timeStr = "All day"
+		}
 	} else {
 		localStart := e.Start.Local()
 		dayLabel := getDayLabel(e.Start, now)
