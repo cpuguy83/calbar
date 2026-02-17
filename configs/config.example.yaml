@@ -31,12 +31,44 @@ sources:
   #   username: "myuser"
   #   password_cmd: "pass show calendar/example"
   
+  # Individual fields can be fetched from a secret store using _cmd variants.
+  # Each of url, username, and password has a corresponding _cmd field.
+  # If both a field and its _cmd variant are set, the direct value takes precedence.
+  # - name: "Google Calendar"
+  #   type: ics
+  #   url_cmd: "op read op://Vault/GoogleCal/url"
+  #
+  # - name: "CalDAV"
+  #   type: caldav
+  #   url: "https://caldav.example.com/calendars/user/default/"
+  #   username_cmd: "op read op://Vault/CalDAV/username"
+  #   password_cmd: "op read op://Vault/CalDAV/password"
+  
   # CalDAV server
   # - name: "Personal"
   #   type: caldav
   #   url: "https://caldav.example.com/calendars/user/default/"
   #   username: "myuser"
   #   password_cmd: "pass show caldav/myserver"
+  
+  # Source with connection details from an external command (e.g. 1Password, pass, secret-tool).
+  # The command must output YAML/JSON with connection fields: type, url, username, password, calendars.
+  # This is useful when your config is public (e.g. NixOS) and you want to keep secrets out of it.
+  # - name: "Personal"
+  #   config_cmd: "op read op://Vault/GoogleCal/config"
+  #
+  # The 1Password entry would contain YAML like:
+  #   type: ics
+  #   url: "https://calendar.google.com/calendar/ical/SECRET_ID/basic.ics"
+  #
+  # Or for CalDAV:
+  # - name: "Work"
+  #   config_cmd: "pass show calbar/work"
+  #   filters:
+  #     mode: or
+  #     rules:
+  #       - field: title
+  #         contains: "standup"
   
   # Microsoft 365 via Microsoft Identity Broker (Linux SSO)
   # Uses your existing browser session - no manual auth needed

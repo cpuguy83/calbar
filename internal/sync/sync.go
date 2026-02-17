@@ -3,6 +3,7 @@ package sync
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -162,40 +163,48 @@ func createSources(cfgs []config.SourceConfig) ([]sourceWithFilter, error) {
 	var sources []sourceWithFilter
 
 	for _, cfg := range cfgs {
+		resolved, err := cfg.Resolve()
+		if err != nil {
+			return nil, err
+		}
+
+		url, err := resolved.GetURL()
+		if err != nil {
+			return nil, fmt.Errorf("source %q: %w", resolved.Name, err)
+		}
+
+		username, err := resolved.GetUsername()
+		if err != nil {
+			return nil, fmt.Errorf("source %q: %w", resolved.Name, err)
+		}
+
+		password, err := resolved.GetPassword()
+		if err != nil {
+			return nil, fmt.Errorf("source %q: %w", resolved.Name, err)
+		}
+
 		var src calendar.Source
 
-		switch cfg.Type {
+		switch resolved.Type {
 		case "ics":
-			password, err := cfg.GetPassword()
-			if err != nil {
-				return nil, err
-			}
-			src = calendar.NewICSSource(cfg.Name, cfg.URL, cfg.Username, password)
+			src = calendar.NewICSSource(resolved.Name, url, username, password)
 
 		case "caldav":
-			password, err := cfg.GetPassword()
-			if err != nil {
-				return nil, err
-			}
-			src = calendar.NewCalDAVSource(cfg.Name, cfg.URL, cfg.Username, password, cfg.Calendars)
+			src = calendar.NewCalDAVSource(resolved.Name, url, username, password, resolved.Calendars)
 
 		case "icloud":
-			password, err := cfg.GetPassword()
-			if err != nil {
-				return nil, err
-			}
-			src = calendar.NewICloudSource(cfg.Name, cfg.Username, password, cfg.Calendars)
+			src = calendar.NewICloudSource(resolved.Name, username, password, resolved.Calendars)
 
 		case "ms365":
-			src = calendar.NewMS365Source(cfg.Name)
+			src = calendar.NewMS365Source(resolved.Name)
 
 		default:
-			slog.Warn("unknown source type", "type", cfg.Type, "name", cfg.Name)
+			slog.Warn("unknown source type", "type", resolved.Type, "name", resolved.Name)
 			continue
 		}
 
 		// Create per-source filter (if no rules, filter passes everything through)
-		f, err := filter.New(cfg.Filters)
+		f, err := filter.New(resolved.Filters)
 		if err != nil {
 			return nil, err
 		}
