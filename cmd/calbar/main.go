@@ -29,9 +29,8 @@ type hiddenEntry struct {
 
 func main() {
 	var (
-		configPath    = flag.String("config", "", "path to config file (default: ~/.config/calbar/config.yaml)")
-		verbose       = flag.Bool("v", false, "verbose logging")
-		noAutoDismiss = flag.Bool("no-auto-dismiss", false, "disable auto-dismiss on focus loss (useful for screenshots)")
+		configPath = flag.String("config", "", "path to config file (default: ~/.config/calbar/config.yaml)")
+		verbose    = flag.Bool("v", false, "verbose logging")
 	)
 	flag.Parse()
 
@@ -65,7 +64,6 @@ func main() {
 	// Create app
 	app := &App{
 		cfg:             cfg,
-		noAutoDismiss:   *noAutoDismiss,
 		notifiedEvents:  make(map[string]time.Time),
 		notificationIDs: make(map[uint32]string),
 	}
@@ -78,12 +76,11 @@ func main() {
 
 // App is the main calbar application.
 type App struct {
-	cfg           *config.Config
-	noAutoDismiss bool
-	tray          *tray.Tray
-	ui            ui.UI
-	notifier      *notify.Notifier
-	syncer        *sync.Syncer
+	cfg      *config.Config
+	tray     *tray.Tray
+	ui       ui.UI
+	notifier *notify.Notifier
+	syncer   *sync.Syncer
 
 	mu            gosync.RWMutex
 	events        []calendar.Event
@@ -111,9 +108,9 @@ func (a *App) selectBackend() (ui.UI, error) {
 		}
 		slog.Info("using GTK backend")
 		return ui.NewGTK(ui.Config{
-			TimeRange:     a.cfg.UI.TimeRange,
-			EventEndGrace: a.cfg.UI.EventEndGrace,
-			NoAutoDismiss: a.noAutoDismiss,
+			TimeRange:         a.cfg.UI.TimeRange,
+			EventEndGrace:     a.cfg.UI.EventEndGrace,
+			HoverDismissDelay: *a.cfg.UI.HoverDismissDelay,
 		}), nil
 
 	case "menu":
@@ -130,9 +127,9 @@ func (a *App) selectBackend() (ui.UI, error) {
 		if ui.GTKAvailable() {
 			slog.Info("auto-selected GTK backend")
 			return ui.NewGTK(ui.Config{
-				TimeRange:     a.cfg.UI.TimeRange,
-				EventEndGrace: a.cfg.UI.EventEndGrace,
-				NoAutoDismiss: a.noAutoDismiss,
+				TimeRange:         a.cfg.UI.TimeRange,
+				EventEndGrace:     a.cfg.UI.EventEndGrace,
+				HoverDismissDelay: *a.cfg.UI.HoverDismissDelay,
 			}), nil
 		}
 		slog.Info("GTK not available, falling back to menu backend")

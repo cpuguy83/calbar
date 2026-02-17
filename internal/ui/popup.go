@@ -58,16 +58,16 @@ type Popup struct {
 	detailsEvent      *calendar.Event
 	detailsFromHidden bool // true if viewing details from hidden events list
 
-	mu            sync.RWMutex
-	events        []calendar.Event
-	hiddenEvents  []calendar.Event
-	timeRange     time.Duration
-	eventEndGrace time.Duration
-	stale         bool
-	lastSync      time.Time
-	loading       bool
-	pointerInside bool
-	noAutoDismiss bool
+	mu                sync.RWMutex
+	events            []calendar.Event
+	hiddenEvents      []calendar.Event
+	timeRange         time.Duration
+	eventEndGrace     time.Duration
+	stale             bool
+	lastSync          time.Time
+	loading           bool
+	pointerInside     bool
+	hoverDismissDelay time.Duration
 
 	dismissTimer uint
 	onJoin       func(url string)
@@ -321,12 +321,12 @@ func (p *Popup) getDismissTimerCb() *glib.SourceFunc {
 }
 
 // NewPopup creates a new popup window.
-func NewPopup(timeRange, eventEndGrace time.Duration, noAutoDismiss bool) *Popup {
+func NewPopup(timeRange, eventEndGrace, hoverDismissDelay time.Duration) *Popup {
 	return &Popup{
-		timeRange:     timeRange,
-		eventEndGrace: eventEndGrace,
-		loading:       true,
-		noAutoDismiss: noAutoDismiss,
+		timeRange:         timeRange,
+		eventEndGrace:     eventEndGrace,
+		loading:           true,
+		hoverDismissDelay: hoverDismissDelay,
 	}
 }
 
@@ -357,8 +357,8 @@ func (p *Popup) Init() {
 		gtk4layershell.SetNamespace(winPtr, "calbar-popup")
 		p.window.SetDecorated(false)
 
-		// Auto-dismiss on focus loss (unless disabled)
-		if !p.noAutoDismiss {
+		// Auto-dismiss on focus loss (unless disabled by hover_dismiss_delay: 0)
+		if p.hoverDismissDelay != 0 {
 			// Connect to notify::is-active signal
 			notifyCb := func(obj gobject.Object, pspec uintptr) {
 				if p.window.IsVisible() {
@@ -372,9 +372,11 @@ func (p *Popup) Init() {
 						loading := p.loading
 						pointerInside := p.pointerInside
 						p.mu.RUnlock()
-						// Only dismiss if pointer is also outside
+						// Short delay (100ms) to avoid race when window is first shown
+						// (property notifications fire before the window gains focus).
+						// getDismissTimerCb re-checks all conditions before dismissing.
 						if !loading && !pointerInside && p.dismissTimer == 0 {
-							p.startDismissTimer()
+							p.dismissTimer = glib.TimeoutAdd(100, p.getDismissTimerCb(), 0)
 						}
 					}
 				}
@@ -974,12 +976,13 @@ func (p *Popup) hideAll() {
 	}
 }
 
-// startDismissTimer starts a timer to dismiss the popup after a short delay.
+// startDismissTimer starts a timer to dismiss the popup after a configurable delay.
+// If hoverDismissDelay is 0, auto-dismiss is disabled and no timer is started.
 func (p *Popup) startDismissTimer() {
-	if p.dismissTimer != 0 {
+	if p.hoverDismissDelay == 0 || p.dismissTimer != 0 {
 		return
 	}
-	p.dismissTimer = glib.TimeoutAdd(300, p.getDismissTimerCb(), 0)
+	p.dismissTimer = glib.TimeoutAdd(uint(p.hoverDismissDelay.Milliseconds()), p.getDismissTimerCb(), 0)
 }
 
 // Toggle shows or hides the popup.
