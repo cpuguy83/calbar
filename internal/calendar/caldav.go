@@ -193,6 +193,8 @@ func (s *CalDAVSource) parseCalendarObject(data *ics.Calendar, calName string) (
 
 // parseEventComponent converts an ICS VEVENT to our Event type.
 func (s *CalDAVSource) parseEventComponent(comp *ics.Component, calName string) (Event, error) {
+	normalizeComponentTimezones(comp)
+
 	event := Event{
 		Source: fmt.Sprintf("%s/%s", s.name, calName),
 	}
