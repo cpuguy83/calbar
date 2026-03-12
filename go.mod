@@ -9,6 +9,7 @@ require (
 	github.com/godbus/dbus/v5 v5.2.2
 	github.com/jwijenbergh/purego v0.0.0-20251017112123-b71757b9ba42
 	github.com/jwijenbergh/puregotk v0.0.0-20260115100645-c78e1521129b
+	github.com/thommeo/winianatz v0.0.2
 	gopkg.in/yaml.v3 v3.0.1
 )
 
