@@ -152,6 +152,8 @@ func ParseICS(r io.Reader) ([]Event, error) {
 
 // parseEventComponent converts an ICS VEVENT component to our Event type.
 func parseEventComponent(comp *ics.Component) (Event, error) {
+	normalizeComponentTimezones(comp)
+
 	event := Event{}
 
 	// UID

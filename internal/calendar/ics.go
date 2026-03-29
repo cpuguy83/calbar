@@ -108,6 +108,8 @@ func (s *ICSSource) parseICS(r io.Reader) ([]Event, error) {
 // parseEvent converts an ICS VEVENT component to our Event type.
 // For recurring events, it expands occurrences within the configured time range.
 func (s *ICSSource) parseEvent(comp *ics.Component) ([]Event, error) {
+	normalizeComponentTimezones(comp)
+
 	base := Event{
 		Source: s.name,
 	}
