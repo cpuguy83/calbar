@@ -50,6 +50,18 @@ sources:
   #   url: "https://caldav.example.com/calendars/user/default/"
   #   username: "myuser"
   #   password_cmd: "pass show caldav/myserver"
+  #   calendars:              # Optional: only sync specific calendars by name
+  #     - "Personal"
+  #     - "Work"
+  
+  # iCloud (CalDAV with iCloud defaults — no URL needed)
+  # Requires an app-specific password: https://support.apple.com/en-us/102654
+  # - name: "iCloud"
+  #   type: icloud
+  #   username: "apple-id@example.com"
+  #   password_cmd: "pass show icloud/app-password"
+  #   calendars:              # Optional: only sync specific calendars
+  #     - "Home"
   
   # Source with connection details from an external command (e.g. 1Password, pass, secret-tool).
   # The command must output YAML/JSON with connection fields: type, url, username, password, calendars.
@@ -148,8 +160,27 @@ notifications:
 # UI Settings
 # -----------------------------------------------------------------------------
 ui:
-  # How far ahead to show events in popup
+  # How far ahead to show events in popup (default: 7d)
   time_range: 24h
   
   # Theme: "system", "light", or "dark"
   theme: system
+  
+  # UI backend: "auto", "gtk", or "menu" (default: auto)
+  # "auto" prefers GTK if available, falls back to dmenu-style launcher
+  # backend: auto
+  
+  # Max events to show in popup (default: 20)
+  # max_events: 20
+  
+  # Keep events visible for this long after they end (default: 5m)
+  # event_end_grace: 5m
+  
+  # Delay before popup auto-dismisses when pointer leaves (default: 3s)
+  # Set to "0s" to disable auto-dismiss on pointer leave
+  # hover_dismiss_delay: 3s
+  
+  # dmenu-style backend configuration (used when backend is "menu" or GTK is unavailable)
+  # menu:
+  #   program: rofi           # Auto-detected if empty (tries rofi, wofi, fuzzel, bemenu, dmenu)
+  #   args: ["-theme", "custom"]

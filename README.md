@@ -8,7 +8,7 @@ A calendar tray app for Linux desktops, similar to [Dato](https://sindresorhus.c
 
 ## Features
 
-- **Multiple calendar sources**: ICS feeds, CalDAV, Microsoft 365
+- **Multiple calendar sources**: ICS feeds, CalDAV, iCloud, Microsoft 365
 - **Include/exclude filtering**: Only show events matching specific rules (great for filtering noisy work calendars)
 - **Hide events**: Temporarily hide individual events from view (great for dismissed meetings or noise)
 - **System tray integration**: StatusNotifierItem (SNI) for Waybar and other modern tray implementations
@@ -85,10 +85,10 @@ Create your config file at `~/.config/calbar/config.yaml`:
 ```yaml
 # CalBar Configuration
 
-# Sync daemon settings
+# Sync settings
 sync:
-  interval: 5m
-  output: ~/.local/share/calbar/calendar.ics
+  interval: 5m         # How often to refresh calendar feeds
+  time_range: 14d      # How far ahead to fetch events (supports d/w suffixes)
 
 # Calendar sources
 sources:
@@ -110,32 +110,52 @@ sources:
     url: "https://caldav.example.com/calendars/user/default/"
     username: "myuser"
     password_cmd: "pass show caldav/password"
+    calendars:                                   # Optional: sync only specific calendars
+      - "Personal"
+      - "Work"
+
+  # iCloud (CalDAV with iCloud defaults)
+  # - name: "iCloud"
+  #   type: icloud
+  #   username: "apple-id@example.com"
+  #   password_cmd: "pass show icloud/app-password"
 
   # Microsoft 365 via Microsoft Identity Broker (Linux SSO)
   - name: "Work (MS365)"
     type: ms365
+
+  # Source with connection details from an external command.
+  # The command must output YAML/JSON with connection fields: type, url, username, password, calendars.
+  # Useful when your config is public (e.g. NixOS) and secrets should stay out of it.
+  # - name: "Secret Calendar"
+  #   config_cmd: "op read op://Vault/Calendar/config"
 
 # Filters (only matching events are shown)
 # Leave empty to show all events
 filters:
   mode: or  # "or" = match any rule, "and" = match all rules
   rules:
-    # Only sync events with these titles
+    # Substring match (most common)
     - field: title
-      match: "containerd contributors meeting"
+      contains: "standup"
       case_insensitive: true
 
     - field: title
-      match: "Team Standup"
+      contains: "Team Meeting"
       case_insensitive: true
 
     # Match by organizer
     - field: organizer
-      match: "important-person@company.com"
+      exact: "important-person@company.com"
 
-    # Regex matching (prefix with "regex:")
-    - field: title
-      match: "regex:^\\[Priority\\]"
+    # Regex matching
+    # - field: title
+    #   regex: "^\\[Priority\\]"
+
+    # Exclude rules - hide matching events regardless of include rules
+    # - field: title
+    #   contains: "Canceled:"
+    #   exclude: true
 
 # Notification settings
 notifications:
@@ -146,8 +166,15 @@ notifications:
 
 # UI settings
 ui:
-  time_range: 24h  # Show events for the next 24 hours
-  theme: system    # system, light, or dark
+  time_range: 24h               # How far ahead to show events in popup (default: 7d)
+  theme: system                 # system, light, or dark
+  backend: auto                 # auto, gtk, or menu (default: auto)
+  max_events: 20                # Max events to show in popup
+  event_end_grace: 5m           # Keep events visible after they end
+  hover_dismiss_delay: 3s       # Delay before popup auto-dismisses on pointer-leave (0 = never)
+  # menu:                       # dmenu-style backend config (when backend is "menu" or GTK unavailable)
+  #   program: rofi             # Auto-detected if empty (tries rofi, wofi, fuzzel, bemenu, dmenu)
+  #   args: ["-theme", "custom"]
 ```
 
 ## Usage
@@ -199,10 +226,46 @@ For native MS365 integration (uses Linux SSO via Microsoft Identity Broker):
 
 1. Get your CalDAV URL from your calendar provider
 2. Add to config as a `caldav` type source
+3. Optionally specify `calendars` to sync only specific calendars by name
+
+### iCloud
+
+1. Generate an [app-specific password](https://support.apple.com/en-us/102654) for your Apple ID
+2. Add to config as an `icloud` type source (uses CalDAV with iCloud defaults)
+3. Use your Apple ID as `username` and the app-specific password via `password_cmd`
+
+### Secret Management
+
+Each source field that may contain a secret (`url`, `username`, `password`) has a corresponding `_cmd` variant that runs a shell command to retrieve the value at runtime:
+
+```yaml
+- name: "Private"
+  type: ics
+  url_cmd: "op read op://Vault/Calendar/url"
+  username_cmd: "op read op://Vault/Calendar/username"
+  password_cmd: "op read op://Vault/Calendar/password"
+```
+
+If both a field and its `_cmd` variant are set, the direct value takes precedence.
+
+For full external config (e.g. when your config file is in a public repo), use `config_cmd` to fetch all connection fields from a single command:
+
+```yaml
+- name: "Work"
+  config_cmd: "pass show calbar/work-config"
+  filters:  # Per-source filters can still be set inline
+    rules:
+      - field: title
+        contains: "standup"
+```
+
+The command must output YAML or JSON containing `type`, `url`, `username`, `password`, and/or `calendars`.
 
 ## Filtering
 
 CalBar supports include/exclude filtering - you can specify which events to show or hide. This is useful when you have a noisy work calendar but only care about specific meetings.
+
+Exclude rules (with `exclude: true`) are applied first to remove unwanted events, then include rules determine which of the remaining events are shown. If no include rules are defined, all non-excluded events are shown.
 
 ### Filter fields
 
@@ -277,6 +340,30 @@ filters:
       case_insensitive: true
     - field: organizer
       exact: "boss@company.com"
+
+# Exclude rules - hide matching events (applied before include rules)
+filters:
+  rules:
+    - field: title
+      contains: "Canceled:"
+      exclude: true
+    - field: title
+      contains: "standup"
+      case_insensitive: true
+```
+
+### Per-source filters
+
+Filters can also be set on individual sources, applied during sync before global filters:
+
+```yaml
+sources:
+  - name: "Work"
+    type: ms365
+    filters:
+      rules:
+        - field: title
+          contains: "standup"
 ```
 
 ## Meeting Link Detection

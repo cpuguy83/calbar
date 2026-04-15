@@ -1,4 +1,4 @@
-// Package config provides configuration loading for calbar and calsync.
+// Package config provides configuration loading for calbar.
 package config
 
 import (
@@ -21,7 +21,7 @@ type Config struct {
 	UI            UIConfig           `yaml:"ui"`
 }
 
-// SyncConfig configures the sync daemon.
+// SyncConfig configures the sync loop.
 type SyncConfig struct {
 	Interval  time.Duration `yaml:"interval"`
 	Output    string        `yaml:"output"`

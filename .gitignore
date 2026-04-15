@@ -1,6 +1,5 @@
 # Binaries
 /calbar
-/calsync
 
 # Personal config (use configs/config.example.yaml as template)
 config.yaml

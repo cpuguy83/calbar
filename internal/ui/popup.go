@@ -379,7 +379,7 @@ func (p *Popup) Init() {
 	p.window.SetTitle("CalBar")
 
 	// Layer shell setup for Wayland compositors.
-	// We make the window fullscreen (anchor all 4 edges, exclusive_zone=-1)
+	// We make the window fullscreen (anchor all 4 edges, exclusive_zone=0)
 	// so it acts as a transparent overlay. The actual popup content is placed
 	// in the top-right corner via alignment. Clicks on the transparent area
 	// outside the content widget dismiss the popup (swaync-style).

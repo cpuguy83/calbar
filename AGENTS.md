@@ -31,7 +31,7 @@ All GTK-enabled files must have the `!nogtk && cgo` build tag.
 |---------|---------|
 | `cmd/calbar` | Entry point, app lifecycle, notification loop, hide/unhide |
 | `internal/config` | YAML config loading, defaults, custom duration parsing (supports `d`/`w` suffixes) |
-| `internal/calendar` | `Event` struct, `Source` interface, ICS/CalDAV/MS365 implementations |
+| `internal/calendar` | `Event` struct, `Source` interface, ICS/CalDAV/iCloud/MS365 implementations, ICS merge/serialization, Windows TZID normalization |
 | `internal/sync` | Multi-source sync orchestrator with per-source filters |
 | `internal/filter` | Include/exclude filter engine (contains/exact/prefix/suffix/regex) |
 | `internal/ui` | `UI` interface, GTK backend (`gtk.go`/`popup.go`), stub (`gtk_stub.go`) |
@@ -63,7 +63,7 @@ func (s *stableCallback[T]) get(init func() T) *T {
 - **Never create ad-hoc closures for GTK callbacks** — always use this pattern.
 - For per-widget data, use `map[uintptr]*calendar.Event` / `map[uintptr]string` keyed by `widget.GoPointer()` instead of closures.
 
-The same pattern appears in `cmd/calbar/run_gtk.go` for the `updateUI` callback.
+The same pattern (sync.Once + stored callback) appears in `cmd/calbar/run_gtk.go` for the `updateUI` callback, via a manual `gtkCallbacks` struct rather than the generic `stableCallback[T]` type.
 
 ## gtk4-layer-shell Bindings
 
@@ -88,9 +88,11 @@ The popup uses a **fullscreen transparent layer-shell overlay** (swaync-style):
 YAML at `~/.config/calbar/config.yaml`. See `configs/config.example.yaml`.
 
 Key conventions:
-- Duration fields use `*time.Duration` in the YAML-facing struct (pointer = distinguishes "not set" from zero) and plain `time.Duration` internally.
-- Custom `UnmarshalYAML` in `UIConfig` parses durations and must preserve all fields when using a raw intermediary struct.
-- `password_cmd` fields allow external password managers.
+- Most duration fields use plain `time.Duration`. Only `HoverDismissDelay` uses `*time.Duration` (pointer distinguishes "not set" from zero — zero means "never auto-dismiss").
+- Custom `UnmarshalYAML` exists on `SyncConfig`, `NotificationConfig`, and `UIConfig`. Each uses a raw intermediary struct to parse duration strings and must preserve all fields when adding new ones.
+- `SyncConfig.UnmarshalYAML` uses the custom `parseDuration` function which supports `d` (days) and `w` (weeks) suffixes. `UIConfig.UnmarshalYAML` uses standard `time.ParseDuration` — so `d`/`w` suffixes only work for `sync.interval` and `sync.time_range`, **not** for UI duration fields.
+- Source configs support `password_cmd`, `url_cmd`, `username_cmd` fields that execute shell commands to retrieve secrets at runtime. A `config_cmd` field can fetch the entire connection config (type, url, username, password, calendars) from an external command.
+- Per-source `filters` allow filtering events at the source level during sync, in addition to global filters.
 
 ## Preferences
 
