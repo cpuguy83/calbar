@@ -92,10 +92,11 @@ func (s *MS365Source) Fetch(ctx context.Context, end time.Time) ([]Event, error)
 	}
 
 	// Fetch events from Graph API
-	// Get events from now until the specified end time
-	now := time.Now()
+	// Include a small lookback so live syncs don't drop events that started
+	// earlier today but should still be visible in the UI.
+	start := time.Now().Add(-24 * time.Hour)
 
-	events, err := s.fetchCalendarView(ctx, token.AccessToken, now, end)
+	events, err := s.fetchCalendarView(ctx, token.AccessToken, start, end)
 	if err != nil {
 		return nil, fmt.Errorf("fetch calendar: %w", err)
 	}

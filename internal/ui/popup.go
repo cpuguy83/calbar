@@ -104,6 +104,61 @@ type Popup struct {
 	// Widget -> data lookup for stable callbacks (accessed only from GTK main thread)
 	widgetEvents map[uintptr]*calendar.Event
 	widgetLinks  map[uintptr]string
+
+	// Track view-local lookup entries so repeated details/hidden rebuilds don't
+	// retain stale event/link data until the next full list refresh.
+	detailsLookupPtrs []uintptr
+	hiddenLookupPtrs  []uintptr
+}
+
+type unrefable interface {
+	Unref()
+}
+
+type widgetAppender interface {
+	Append(*gtk.Widget)
+}
+
+type widgetChildSetter interface {
+	SetChild(*gtk.Widget)
+}
+
+type widgetContainer interface {
+	GetFirstChild() *gtk.Widget
+	Remove(*gtk.Widget)
+}
+
+func clearChildren(parent widgetContainer) {
+	for child := parent.GetFirstChild(); child != nil; child = parent.GetFirstChild() {
+		parent.Remove(child)
+		child.Unref()
+	}
+}
+
+func appendOwned(parent widgetAppender, child *gtk.Widget, owner unrefable) {
+	parent.Append(child)
+	owner.Unref()
+}
+
+func setOwnedChild(parent widgetChildSetter, child *gtk.Widget, owner unrefable) {
+	parent.SetChild(child)
+	owner.Unref()
+}
+
+func (p *Popup) clearLookupEntries(ptrs []uintptr) []uintptr {
+	for _, ptr := range ptrs {
+		delete(p.widgetEvents, ptr)
+		delete(p.widgetLinks, ptr)
+	}
+	return nil
+}
+
+func (p *Popup) clearDetailsLookup() {
+	p.detailsLookupPtrs = p.clearLookupEntries(p.detailsLookupPtrs)
+}
+
+func (p *Popup) clearHiddenLookup() {
+	p.hiddenLookupPtrs = p.clearLookupEntries(p.hiddenLookupPtrs)
 }
 
 // Stable callback getters - these return pointers to the same function each time,
@@ -116,6 +171,7 @@ func (p *Popup) getEventRowClickCb() *func(gtk.GestureClick, int, float64, float
 			if widget == nil {
 				return
 			}
+			defer widget.Unref()
 			if event, ok := p.widgetEvents[widget.GoPointer()]; ok {
 				p.showDetails(*event)
 			}
@@ -130,6 +186,7 @@ func (p *Popup) getEventRowRightClickCb() *func(gtk.GestureClick, int, float64, 
 			if widget == nil {
 				return
 			}
+			defer widget.Unref()
 			if event, ok := p.widgetEvents[widget.GoPointer()]; ok {
 				slog.Debug("hide event via right-click", "uid", event.UID)
 				if p.onHide != nil {
@@ -185,6 +242,7 @@ func (p *Popup) getUnhideRowClickCb() *func(gtk.GestureClick, int, float64, floa
 			if widget == nil {
 				return
 			}
+			defer widget.Unref()
 			if event, ok := p.widgetEvents[widget.GoPointer()]; ok {
 				// Show details view for hidden event
 				p.detailsFromHidden = true
@@ -334,6 +392,8 @@ func (p *Popup) getClickOutsidePressedCb() *func(gtk.GestureClick, int, float64,
 			// Hit-test: check if the click is inside the content widget
 			bounds := graphene.RectAlloc()
 			point := graphene.PointAlloc()
+			defer bounds.Free()
+			defer point.Free()
 			point.Init(float32(x), float32(y))
 
 			if p.content.ComputeBounds(&p.window.Widget, bounds) {
@@ -1122,16 +1182,14 @@ func (p *Popup) updateList() {
 	// Clear widget -> data lookup maps before rebuilding
 	p.widgetEvents = make(map[uintptr]*calendar.Event)
 	p.widgetLinks = make(map[uintptr]string)
+	p.detailsLookupPtrs = nil
+	p.hiddenLookupPtrs = nil
 
 	// Clear existing timed events
-	for child := p.listBox.GetFirstChild(); child != nil; child = p.listBox.GetFirstChild() {
-		p.listBox.Remove(child)
-	}
+	clearChildren(p.listBox)
 
 	// Clear existing all-day events
-	for child := p.allDaySection.GetFirstChild(); child != nil; child = p.allDaySection.GetFirstChild() {
-		p.allDaySection.Remove(child)
-	}
+	clearChildren(p.allDaySection)
 	p.allDaySection.SetVisible(false)
 
 	p.mu.RLock()
@@ -1226,13 +1284,13 @@ func (p *Popup) showLoadingState() {
 	spinner := gtk.NewSpinner()
 	spinner.SetSizeRequest(32, 32)
 	spinner.Start()
-	box.Append(&spinner.Widget)
+	appendOwned(box, &spinner.Widget, spinner)
 
 	label := gtk.NewLabel("Loading calendars...")
 	label.AddCssClass("loading-text")
-	box.Append(&label.Widget)
+	appendOwned(box, &label.Widget, label)
 
-	p.listBox.Append(&box.Widget)
+	appendOwned(p.listBox, &box.Widget, box)
 }
 
 // showEmptyState displays the empty state.
@@ -1246,17 +1304,17 @@ func (p *Popup) showEmptyState() {
 	icon := gtk.NewImageFromIconName("weather-clear-symbolic")
 	icon.AddCssClass("empty-icon")
 	icon.SetPixelSize(48)
-	box.Append(&icon.Widget)
+	appendOwned(box, &icon.Widget, icon)
 
 	title := gtk.NewLabel("All Clear")
 	title.AddCssClass("empty-title")
-	box.Append(&title.Widget)
+	appendOwned(box, &title.Widget, title)
 
 	subtitle := gtk.NewLabel("No upcoming events")
 	subtitle.AddCssClass("empty-subtitle")
-	box.Append(&subtitle.Widget)
+	appendOwned(box, &subtitle.Widget, subtitle)
 
-	p.listBox.Append(&box.Widget)
+	appendOwned(p.listBox, &box.Widget, box)
 }
 
 // showNoTimedEventsState displays a minimal state when only all-day events exist.
@@ -1270,13 +1328,13 @@ func (p *Popup) showNoTimedEventsState() {
 	icon := gtk.NewImageFromIconName("weather-clear-symbolic")
 	icon.AddCssClass("empty-icon")
 	icon.SetPixelSize(32)
-	box.Append(&icon.Widget)
+	appendOwned(box, &icon.Widget, icon)
 
 	subtitle := gtk.NewLabel("No timed events today")
 	subtitle.AddCssClass("empty-subtitle")
-	box.Append(&subtitle.Widget)
+	appendOwned(box, &subtitle.Widget, subtitle)
 
-	p.listBox.Append(&box.Widget)
+	appendOwned(p.listBox, &box.Widget, box)
 }
 
 // populateTimedEvents adds timed event rows grouped by day.
@@ -1304,7 +1362,7 @@ func (p *Popup) populateTimedEvents(events []calendar.Event, now time.Time) {
 		}
 
 		row := p.createTimedEventRow(event, now)
-		p.listBox.Append(&row.Widget)
+		appendOwned(p.listBox, &row.Widget, row)
 	}
 }
 
@@ -1313,7 +1371,7 @@ func (p *Popup) addDaySeparator(day string) {
 	sep := gtk.NewLabel(day)
 	sep.AddCssClass("day-separator")
 	sep.SetXalign(0)
-	p.listBox.Append(&sep.Widget)
+	appendOwned(p.listBox, &sep.Widget, sep)
 }
 
 // addNoEventsRow adds a subtle "no events" indicator row.
@@ -1321,7 +1379,7 @@ func (p *Popup) addNoEventsRow(text string) {
 	label := gtk.NewLabel(text)
 	label.AddCssClass("no-events-row")
 	label.SetXalign(0)
-	p.listBox.Append(&label.Widget)
+	appendOwned(p.listBox, &label.Widget, label)
 }
 
 // populateAllDayEvents adds the all-day events to the fixed bottom section.
@@ -1330,12 +1388,12 @@ func (p *Popup) populateAllDayEvents(events []calendar.Event, now time.Time) {
 	header := gtk.NewLabel("All Day")
 	header.AddCssClass("all-day-header")
 	header.SetXalign(0)
-	p.allDaySection.Append(&header.Widget)
+	appendOwned(p.allDaySection, &header.Widget, header)
 
 	// Event rows
 	for _, event := range events {
 		row := p.createAllDayEventRow(event, now)
-		p.allDaySection.Append(&row.Widget)
+		appendOwned(p.allDaySection, &row.Widget, row)
 	}
 
 	p.allDaySection.SetVisible(true)
@@ -1383,13 +1441,13 @@ func (p *Popup) createTimedEventRow(event calendar.Event, now time.Time) *gtk.Bo
 
 	// Time indicator
 	timeBox := p.createTimeIndicator(event, now)
-	row.Append(&timeBox.Widget)
+	appendOwned(row, &timeBox.Widget, timeBox)
 
 	// Event details
 	details := gtk.NewBox(gtk.OrientationVerticalValue, 0)
 	details.AddCssClass("event-details")
 	details.SetHexpand(true)
-	row.Append(&details.Widget)
+	appendOwned(row, &details.Widget, details)
 
 	// Title
 	titleText := event.Summary
@@ -1407,7 +1465,7 @@ func (p *Popup) createTimedEventRow(event calendar.Event, now time.Time) *gtk.Bo
 	if event.Stale {
 		title.AddCssClass("stale")
 	}
-	details.Append(&title.Widget)
+	appendOwned(details, &title.Widget, title)
 
 	// Meta info (duration)
 	meta := p.getEventDuration(event)
@@ -1416,7 +1474,7 @@ func (p *Popup) createTimedEventRow(event calendar.Event, now time.Time) *gtk.Bo
 		metaLabel.AddCssClass("event-meta")
 		metaLabel.SetXalign(0)
 		metaLabel.SetEllipsize(pango.EllipsizeEndValue)
-		details.Append(&metaLabel.Widget)
+		appendOwned(details, &metaLabel.Widget, metaLabel)
 	}
 
 	// Source
@@ -1424,13 +1482,13 @@ func (p *Popup) createTimedEventRow(event calendar.Event, now time.Time) *gtk.Bo
 		source := gtk.NewLabel(event.Source)
 		source.AddCssClass("event-source")
 		source.SetXalign(0)
-		details.Append(&source.Widget)
+		appendOwned(details, &source.Widget, source)
 	}
 
 	// Join button
 	if meetingLink := links.DetectFromEvent(event.Location, event.Description, event.URL); meetingLink != "" {
-		btn := p.createJoinButton(meetingLink)
-		row.Append(&btn.Widget)
+		btn := p.createJoinButton(meetingLink, nil)
+		appendOwned(row, &btn.Widget, btn)
 	}
 
 	return row
@@ -1469,7 +1527,7 @@ func (p *Popup) createAllDayEventRow(event calendar.Event, now time.Time) *gtk.B
 	if event.Stale {
 		title.AddCssClass("stale")
 	}
-	row.Append(&title.Widget)
+	appendOwned(row, &title.Widget, title)
 
 	// Meta: date range + source
 	var metaParts []string
@@ -1501,7 +1559,7 @@ func (p *Popup) createAllDayEventRow(event calendar.Event, now time.Time) *gtk.B
 		meta := gtk.NewLabel(metaText)
 		meta.AddCssClass("all-day-meta")
 		meta.SetXalign(0)
-		row.Append(&meta.Widget)
+		appendOwned(row, &meta.Widget, meta)
 	}
 
 	return row
@@ -1552,11 +1610,11 @@ func (p *Popup) createTimeIndicator(event calendar.Event, now time.Time) *gtk.Bo
 
 	primaryLabel := gtk.NewLabel(primary)
 	primaryLabel.AddCssClass("time-primary")
-	box.Append(&primaryLabel.Widget)
+	appendOwned(box, &primaryLabel.Widget, primaryLabel)
 
 	secondaryLabel := gtk.NewLabel(secondary)
 	secondaryLabel.AddCssClass("time-secondary")
-	box.Append(&secondaryLabel.Widget)
+	appendOwned(box, &secondaryLabel.Widget, secondaryLabel)
 
 	return box
 }
@@ -1618,7 +1676,7 @@ func (p *Popup) formatDateRange(event calendar.Event, now time.Time) string {
 }
 
 // createJoinButton creates a meeting join button.
-func (p *Popup) createJoinButton(meetingLink string) *gtk.Button {
+func (p *Popup) createJoinButton(meetingLink string, lookupPtrs *[]uintptr) *gtk.Button {
 	service := links.Service(meetingLink)
 
 	btn := gtk.NewButton()
@@ -1641,15 +1699,18 @@ func (p *Popup) createJoinButton(meetingLink string) *gtk.Button {
 
 	icon := gtk.NewImageFromIconName(iconName)
 	icon.SetPixelSize(14)
-	box.Append(&icon.Widget)
+	appendOwned(box, &icon.Widget, icon)
 
 	label := gtk.NewLabel("Join")
-	box.Append(&label.Widget)
+	appendOwned(box, &label.Widget, label)
 
-	btn.SetChild(&box.Widget)
+	setOwnedChild(btn, &box.Widget, box)
 
 	// Store link for lookup and use stable callback
 	p.widgetLinks[btn.GoPointer()] = meetingLink
+	if lookupPtrs != nil {
+		*lookupPtrs = append(*lookupPtrs, btn.GoPointer())
+	}
 	btn.ConnectClicked(p.getJoinClickCb())
 
 	return btn
@@ -1710,11 +1771,10 @@ func (p *Popup) updateHiddenIndicator(count int) {
 // showDetails displays the event details panel.
 func (p *Popup) showDetails(event calendar.Event) {
 	p.detailsEvent = &event
+	p.clearDetailsLookup()
 
 	// Clear previous details content
-	for child := p.detailsView.GetFirstChild(); child != nil; child = p.detailsView.GetFirstChild() {
-		p.detailsView.Remove(child)
-	}
+	clearChildren(p.detailsView)
 
 	// Build details header with back button
 	detailsHeader := gtk.NewBox(gtk.OrientationHorizontalValue, 8)
@@ -1724,25 +1784,25 @@ func (p *Popup) showDetails(event calendar.Event) {
 	backBtn.SetIconName("go-previous-symbolic")
 	backBtn.AddCssClass("details-back-btn")
 	backBtn.ConnectClicked(p.getBackBtnClickCb())
-	detailsHeader.Append(&backBtn.Widget)
+	appendOwned(detailsHeader, &backBtn.Widget, backBtn)
 
 	headerTitle := gtk.NewLabel("Event Details")
 	headerTitle.AddCssClass("header-title")
 	headerTitle.SetHexpand(true)
 	headerTitle.SetXalign(0)
-	detailsHeader.Append(&headerTitle.Widget)
+	appendOwned(detailsHeader, &headerTitle.Widget, headerTitle)
 
-	p.detailsView.Append(&detailsHeader.Widget)
+	appendOwned(p.detailsView, &detailsHeader.Widget, detailsHeader)
 
 	// Scrollable content
 	scrolled := gtk.NewScrolledWindow()
 	scrolled.SetVexpand(true)
 	scrolled.SetPolicy(gtk.PolicyNeverValue, gtk.PolicyAutomaticValue)
-	p.detailsView.Append(&scrolled.Widget)
+	appendOwned(p.detailsView, &scrolled.Widget, scrolled)
 
 	content := gtk.NewBox(gtk.OrientationVerticalValue, 0)
 	content.AddCssClass("details-content")
-	scrolled.SetChild(&content.Widget)
+	setOwnedChild(scrolled, &content.Widget, content)
 
 	// Event title
 	title := gtk.NewLabel(event.Summary)
@@ -1750,7 +1810,7 @@ func (p *Popup) showDetails(event calendar.Event) {
 	title.SetXalign(0)
 	title.SetWrap(true)
 	title.SetWrapMode(pango.WrapWordCharValue)
-	content.Append(&title.Widget)
+	appendOwned(content, &title.Widget, title)
 
 	// Time and date
 	now := time.Now()
@@ -1800,7 +1860,7 @@ func (p *Popup) showDetails(event calendar.Event) {
 		descLabel := gtk.NewLabel("Description")
 		descLabel.AddCssClass("details-section-label")
 		descLabel.SetXalign(0)
-		descSection.Append(&descLabel.Widget)
+		appendOwned(descSection, &descLabel.Widget, descLabel)
 
 		// Strip HTML and clean up description
 		cleanDesc := stripHTML(event.Description)
@@ -1810,9 +1870,9 @@ func (p *Popup) showDetails(event calendar.Event) {
 		descText.SetWrap(true)
 		descText.SetWrapMode(pango.WrapWordCharValue)
 		descText.SetSelectable(true)
-		descSection.Append(&descText.Widget)
+		appendOwned(descSection, &descText.Widget, descText)
 
-		content.Append(&descSection.Widget)
+		appendOwned(content, &descSection.Widget, descSection)
 	}
 
 	// Join button (if meeting link exists)
@@ -1821,11 +1881,11 @@ func (p *Popup) showDetails(event calendar.Event) {
 		btnBox.AddCssClass("details-join-box")
 		btnBox.SetHalign(gtk.AlignCenterValue)
 
-		joinBtn := p.createJoinButton(meetingLink)
+		joinBtn := p.createJoinButton(meetingLink, &p.detailsLookupPtrs)
 		joinBtn.AddCssClass("details-join-btn")
-		btnBox.Append(&joinBtn.Widget)
+		appendOwned(btnBox, &joinBtn.Widget, joinBtn)
 
-		content.Append(&btnBox.Widget)
+		appendOwned(content, &btnBox.Widget, btnBox)
 	}
 
 	// Hide/Unhide button (depends on whether we're viewing a hidden event)
@@ -1841,25 +1901,25 @@ func (p *Popup) showDetails(event calendar.Event) {
 		actionBtn.AddCssClass("unhide-btn")
 		unhideIcon := gtk.NewImageFromIconName("view-reveal-symbolic")
 		unhideIcon.SetPixelSize(14)
-		actionBtnContent.Append(&unhideIcon.Widget)
+		appendOwned(actionBtnContent, &unhideIcon.Widget, unhideIcon)
 		unhideLabel := gtk.NewLabel("Unhide")
-		actionBtnContent.Append(&unhideLabel.Widget)
-		actionBtn.SetChild(&actionBtnContent.Widget)
+		appendOwned(actionBtnContent, &unhideLabel.Widget, unhideLabel)
+		setOwnedChild(actionBtn, &actionBtnContent.Widget, actionBtnContent)
 		actionBtn.ConnectClicked(p.getUnhideClickCb())
 	} else {
 		// Show Hide button for normal events
 		actionBtn.AddCssClass("hide-btn")
 		hideIcon := gtk.NewImageFromIconName("view-conceal-symbolic")
 		hideIcon.SetPixelSize(14)
-		actionBtnContent.Append(&hideIcon.Widget)
+		appendOwned(actionBtnContent, &hideIcon.Widget, hideIcon)
 		hideLabel := gtk.NewLabel("Hide")
-		actionBtnContent.Append(&hideLabel.Widget)
-		actionBtn.SetChild(&actionBtnContent.Widget)
+		appendOwned(actionBtnContent, &hideLabel.Widget, hideLabel)
+		setOwnedChild(actionBtn, &actionBtnContent.Widget, actionBtnContent)
 		actionBtn.ConnectClicked(p.getHideClickCb())
 	}
 
-	actionBtnBox.Append(&actionBtn.Widget)
-	content.Append(&actionBtnBox.Widget)
+	appendOwned(actionBtnBox, &actionBtn.Widget, actionBtn)
+	appendOwned(content, &actionBtnBox.Widget, actionBtnBox)
 
 	// Switch to details view
 	p.stack.SetVisibleChildName("details")
@@ -1880,10 +1940,11 @@ func (p *Popup) hideDetails() {
 
 // showHiddenView displays the hidden events view.
 func (p *Popup) showHiddenView() {
+	p.clearHiddenLookup()
+	p.clearDetailsLookup()
+
 	// Clear previous hidden view content
-	for child := p.hiddenView.GetFirstChild(); child != nil; child = p.hiddenView.GetFirstChild() {
-		p.hiddenView.Remove(child)
-	}
+	clearChildren(p.hiddenView)
 
 	// Build header with back button
 	header := gtk.NewBox(gtk.OrientationHorizontalValue, 8)
@@ -1893,25 +1954,25 @@ func (p *Popup) showHiddenView() {
 	backBtn.SetIconName("go-previous-symbolic")
 	backBtn.AddCssClass("details-back-btn")
 	backBtn.ConnectClicked(p.getHiddenBackBtnClickCb())
-	header.Append(&backBtn.Widget)
+	appendOwned(header, &backBtn.Widget, backBtn)
 
 	headerTitle := gtk.NewLabel("Hidden Events")
 	headerTitle.AddCssClass("header-title")
 	headerTitle.SetHexpand(true)
 	headerTitle.SetXalign(0)
-	header.Append(&headerTitle.Widget)
+	appendOwned(header, &headerTitle.Widget, headerTitle)
 
-	p.hiddenView.Append(&header.Widget)
+	appendOwned(p.hiddenView, &header.Widget, header)
 
 	// Scrollable content
 	scrolled := gtk.NewScrolledWindow()
 	scrolled.SetVexpand(true)
 	scrolled.SetPolicy(gtk.PolicyNeverValue, gtk.PolicyAutomaticValue)
-	p.hiddenView.Append(&scrolled.Widget)
+	appendOwned(p.hiddenView, &scrolled.Widget, scrolled)
 
 	content := gtk.NewBox(gtk.OrientationVerticalValue, 0)
 	content.AddCssClass("hidden-events-list")
-	scrolled.SetChild(&content.Widget)
+	setOwnedChild(scrolled, &content.Widget, content)
 
 	p.mu.RLock()
 	hiddenEvents := p.hiddenEvents
@@ -1923,17 +1984,17 @@ func (p *Popup) showHiddenView() {
 		emptyLabel.AddCssClass("empty-subtitle")
 		emptyLabel.SetVexpand(true)
 		emptyLabel.SetValign(gtk.AlignCenterValue)
-		content.Append(&emptyLabel.Widget)
+		appendOwned(content, &emptyLabel.Widget, emptyLabel)
 	} else {
 		// Instruction label
 		instructionLabel := gtk.NewLabel("Click an event to unhide it")
 		instructionLabel.AddCssClass("hidden-instruction")
-		content.Append(&instructionLabel.Widget)
+		appendOwned(content, &instructionLabel.Widget, instructionLabel)
 
 		// List hidden events
 		for _, event := range hiddenEvents {
 			row := p.createHiddenEventRow(event)
-			content.Append(&row.Widget)
+			appendOwned(content, &row.Widget, row)
 		}
 	}
 
@@ -1953,6 +2014,7 @@ func (p *Popup) createHiddenEventRow(event calendar.Event) *gtk.Box {
 	// Store event for lookup on row
 	eventCopy := event
 	p.widgetEvents[row.GoPointer()] = &eventCopy
+	p.hiddenLookupPtrs = append(p.hiddenLookupPtrs, row.GoPointer())
 
 	// Make row clickable to show details
 	clickGesture := gtk.NewGestureClick()
@@ -1963,7 +2025,7 @@ func (p *Popup) createHiddenEventRow(event calendar.Event) *gtk.Box {
 	// Event info
 	infoBox := gtk.NewBox(gtk.OrientationVerticalValue, 2)
 	infoBox.SetHexpand(true)
-	row.Append(&infoBox.Widget)
+	appendOwned(row, &infoBox.Widget, infoBox)
 
 	// Title
 	title := gtk.NewLabel(event.Summary)
@@ -1971,7 +2033,7 @@ func (p *Popup) createHiddenEventRow(event calendar.Event) *gtk.Box {
 	title.SetXalign(0)
 	title.SetEllipsize(pango.EllipsizeEndValue)
 	title.SetMaxWidthChars(35)
-	infoBox.Append(&title.Widget)
+	appendOwned(infoBox, &title.Widget, title)
 
 	// Time info
 	now := time.Now()
@@ -1986,7 +2048,7 @@ func (p *Popup) createHiddenEventRow(event calendar.Event) *gtk.Box {
 	timeLabel := gtk.NewLabel(timeStr)
 	timeLabel.AddCssClass("hidden-event-meta")
 	timeLabel.SetXalign(0)
-	infoBox.Append(&timeLabel.Widget)
+	appendOwned(infoBox, &timeLabel.Widget, timeLabel)
 
 	// Unhide button (icon that indicates hidden state, clickable to unhide)
 	unhideBtn := gtk.NewButton()
@@ -1995,11 +2057,12 @@ func (p *Popup) createHiddenEventRow(event calendar.Event) *gtk.Box {
 
 	// Store event on the button for lookup
 	p.widgetEvents[unhideBtn.GoPointer()] = &eventCopy
+	p.hiddenLookupPtrs = append(p.hiddenLookupPtrs, unhideBtn.GoPointer())
 
 	// Connect button click to unhide
 	unhideBtn.ConnectClicked(p.getUnhideBtnClickCb())
 
-	row.Append(&unhideBtn.Widget)
+	appendOwned(row, &unhideBtn.Widget, unhideBtn)
 
 	return row
 }
@@ -2011,7 +2074,7 @@ func (p *Popup) addDetailRow(container *gtk.Box, icon string, text string) {
 
 	iconLabel := gtk.NewLabel(icon)
 	iconLabel.AddCssClass("details-icon")
-	row.Append(&iconLabel.Widget)
+	appendOwned(row, &iconLabel.Widget, iconLabel)
 
 	textLabel := gtk.NewLabel(text)
 	textLabel.AddCssClass("details-text")
@@ -2019,9 +2082,9 @@ func (p *Popup) addDetailRow(container *gtk.Box, icon string, text string) {
 	textLabel.SetWrap(true)
 	textLabel.SetWrapMode(pango.WrapWordCharValue)
 	textLabel.SetSelectable(true)
-	row.Append(&textLabel.Widget)
+	appendOwned(row, &textLabel.Widget, textLabel)
 
-	container.Append(&row.Widget)
+	appendOwned(container, &row.Widget, row)
 }
 
 // stripHTML removes HTML tags and converts to readable plain text.
