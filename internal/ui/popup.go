@@ -51,6 +51,8 @@ type Popup struct {
 	statusBar     *gtk.Box
 	statusText    *gtk.Label
 	hiddenCount   *gtk.Label
+	syncButton    *gtk.Button
+	syncIndicator *gtk.Box
 
 	// Details panel
 	stack             *gtk.Stack
@@ -76,6 +78,7 @@ type Popup struct {
 	onJoin       func(url string)
 	onHide       func(uid string)
 	onUnhide     func(uid string)
+	onSync       func()
 
 	// Stable callback references to avoid exhausting purego callback slots.
 	eventRowClickCb        stableCallback[func(gtk.GestureClick, int, float64, float64)]
@@ -86,6 +89,7 @@ type Popup struct {
 	joinClickCb            stableCallback[func(gtk.Button)]
 	hideClickCb            stableCallback[func(gtk.Button)]
 	unhideClickCb          stableCallback[func(gtk.Button)]
+	syncClickCb            stableCallback[func(gtk.Button)]
 	backBtnClickCb         stableCallback[func(gtk.Button)]
 	hiddenBackBtnClickCb   stableCallback[func(gtk.Button)]
 	updateListCb           stableCallback[glib.SourceFunc]
@@ -272,6 +276,17 @@ func (p *Popup) getUnhideClickCb() *func(gtk.Button) {
 				slog.Debug("unhide event from details", "uid", p.detailsEvent.UID)
 				p.onUnhide(p.detailsEvent.UID)
 				p.hideDetails()
+			}
+		}
+	})
+}
+
+func (p *Popup) getSyncClickCb() *func(gtk.Button) {
+	return p.syncClickCb.get(func() func(gtk.Button) {
+		return func(btn gtk.Button) {
+			if p.onSync != nil {
+				slog.Debug("manual sync requested")
+				p.onSync()
 			}
 		}
 	})
@@ -629,6 +644,21 @@ func (p *Popup) buildHeader() *gtk.Box {
 	title.SetXalign(0)
 	header.Append(&title.Widget)
 
+	// Manual sync button
+	p.syncIndicator = gtk.NewBox(gtk.OrientationHorizontalValue, 0)
+	p.syncIndicator.AddCssClass("sync-indicator")
+	p.syncIndicator.SetVisible(false)
+	header.Append(&p.syncIndicator.Widget)
+
+	p.syncButton = gtk.NewButton()
+	p.syncButton.AddCssClass("sync-button")
+	p.syncButton.SetTooltipText("Sync now")
+	refreshIcon := gtk.NewImageFromIconName("view-refresh-symbolic")
+	refreshIcon.SetPixelSize(16)
+	setOwnedChild(p.syncButton, &refreshIcon.Widget, refreshIcon)
+	p.syncButton.ConnectClicked(p.getSyncClickCb())
+	header.Append(&p.syncButton.Widget)
+
 	return header
 }
 
@@ -666,6 +696,22 @@ func (p *Popup) applyCSS() {
 			font-size: 15px;
 			font-weight: 600;
 			letter-spacing: 0.3px;
+		}
+
+		.sync-button {
+			min-width: 32px;
+			min-height: 32px;
+			padding: 0;
+		}
+
+		.sync-indicator {
+			min-width: 8px;
+			min-height: 8px;
+			margin-right: 6px;
+			margin-top: 12px;
+			margin-bottom: 12px;
+			border-radius: 999px;
+			background: @accent_color;
 		}
 
 		/* Event list */
@@ -1148,9 +1194,24 @@ func (p *Popup) SetStale(stale bool) {
 	glib.IdleAdd(p.getUpdateStatusCb(), 0)
 }
 
+// SetLoading marks the popup as actively syncing.
+func (p *Popup) SetLoading(loading bool) {
+	p.mu.Lock()
+	p.loading = loading
+	p.mu.Unlock()
+
+	glib.IdleAdd(p.getUpdateListCb(), 0)
+	glib.IdleAdd(p.getUpdateStatusCb(), 0)
+}
+
 // OnJoin sets the callback for when a join button is clicked.
 func (p *Popup) OnJoin(fn func(url string)) {
 	p.onJoin = fn
+}
+
+// OnSync sets the callback for when the user requests a manual sync.
+func (p *Popup) OnSync(fn func()) {
+	p.onSync = fn
 }
 
 // OnHide sets the callback for when the user hides an event.
@@ -1200,7 +1261,7 @@ func (p *Popup) updateList() {
 	loading := p.loading
 	p.mu.RUnlock()
 
-	if loading {
+	if loading && len(events) == 0 {
 		p.showLoadingState()
 		p.updateStatusBar()
 		return
@@ -1728,6 +1789,17 @@ func (p *Popup) updateStatusBar() {
 	eventCount := len(p.events)
 	loading := p.loading
 	p.mu.RUnlock()
+	if p.syncIndicator != nil {
+		p.syncIndicator.SetVisible(loading)
+	}
+	if p.syncButton != nil {
+		if loading {
+			p.syncButton.SetTooltipText("Syncing...")
+		} else {
+			p.syncButton.SetTooltipText("Sync now")
+		}
+		p.syncButton.SetSensitive(!loading)
+	}
 
 	p.statusBar.RemoveCssClass("stale")
 

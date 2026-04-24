@@ -39,6 +39,9 @@ func (g *GTK) SetEvents(events []calendar.Event) {}
 // SetStale is a no-op stub.
 func (g *GTK) SetStale(stale bool) {}
 
+// SetLoading is a no-op stub.
+func (g *GTK) SetLoading(loading bool) {}
+
 // OnAction is a no-op stub.
 func (g *GTK) OnAction(fn func(Action)) {}
 

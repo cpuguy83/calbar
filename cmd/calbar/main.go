@@ -87,6 +87,7 @@ type App struct {
 	hiddenEntries []hiddenEntry // UIDs hidden by user, sorted by hide time (oldest first)
 	lastSync      time.Time
 	lastSyncErr   error
+	syncing       bool
 
 	// Notification tracking
 	notifiedEvents  map[string]time.Time
@@ -187,6 +188,8 @@ func (a *App) activate() error {
 		case ui.ActionOpenURL:
 			slog.Debug("opening URL", "url", action.URL)
 			links.Open(action.URL)
+		case ui.ActionSync:
+			a.triggerSync()
 		}
 	})
 
@@ -233,7 +236,20 @@ func (a *App) activate() error {
 	}
 
 	// Start sync goroutine
-	go a.syncer.Run(a.ctx, a.onSyncComplete)
+	go func() {
+		a.triggerSync()
+		ticker := time.NewTicker(a.syncer.Interval())
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				a.triggerSync()
+			case <-a.ctx.Done():
+				return
+			}
+		}
+	}()
 
 	// Start notification checker goroutine
 	go a.notificationLoop()
@@ -367,6 +383,37 @@ func (a *App) gcHiddenEntries() {
 	})
 }
 
+func (a *App) beginSync() bool {
+	a.mu.Lock()
+	if a.syncing {
+		a.mu.Unlock()
+		return false
+	}
+	a.syncing = true
+	a.mu.Unlock()
+	a.ui.SetLoading(true)
+	return true
+}
+
+func (a *App) endSync() {
+	a.mu.Lock()
+	a.syncing = false
+	a.mu.Unlock()
+	a.ui.SetLoading(false)
+}
+
+func (a *App) triggerSync() {
+	if !a.beginSync() {
+		slog.Debug("sync request ignored; already syncing")
+		return
+	}
+
+	go func() {
+		events, failedSources, err := a.syncer.Sync(a.ctx)
+		a.onSyncComplete(events, failedSources, err)
+	}()
+}
+
 // onSyncComplete is called after each sync completes.
 func (a *App) onSyncComplete(events []calendar.Event, failedSources []string, err error) {
 	a.mu.Lock()
@@ -406,6 +453,7 @@ func (a *App) onSyncComplete(events []calendar.Event, failedSources []string, er
 	}
 	a.lastSync = time.Now()
 	a.mu.Unlock()
+	a.endSync()
 
 	// Update UI - schedule on appropriate thread
 	a.scheduleUIUpdate()

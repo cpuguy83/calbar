@@ -40,6 +40,11 @@ func (g *GTK) Init() error {
 			links.Open(url)
 		}
 	})
+	g.popup.OnSync(func() {
+		if g.onAction != nil {
+			g.onAction(Action{Type: ActionSync})
+		}
+	})
 	return nil
 }
 
@@ -66,6 +71,11 @@ func (g *GTK) SetEvents(events []calendar.Event) {
 // SetStale marks the data as potentially stale.
 func (g *GTK) SetStale(stale bool) {
 	g.popup.SetStale(stale)
+}
+
+// SetLoading marks the popup as actively syncing.
+func (g *GTK) SetLoading(loading bool) {
+	g.popup.SetLoading(loading)
 }
 
 // OnAction sets the callback for user actions.

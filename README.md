@@ -205,6 +205,15 @@ Example:
     background: rgba(255, 255, 255, 0.03);
 }
 
+.sync-button {
+    min-width: 30px;
+    min-height: 30px;
+}
+
+.sync-indicator {
+    background: @accent_color;
+}
+
 .day-separator,
 .all-day-section {
     background: rgba(255, 255, 255, 0.025);
@@ -226,6 +235,7 @@ These are the main classes exposed by the popup UI:
 
 - `.popup-container`: outer visible card
 - `.popup-header`: top header row
+- `.sync-button`, `.sync-indicator`: manual sync button and active-sync dot in the header
 - `.event-list`: timed events list container
 - `.event-card`: individual timed event row
 - `.time-indicator`: left-side time block for an event

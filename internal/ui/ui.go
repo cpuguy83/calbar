@@ -30,6 +30,9 @@ type UI interface {
 	// SetStale marks the data as potentially stale.
 	SetStale(stale bool)
 
+	// SetLoading marks the UI as actively syncing.
+	SetLoading(loading bool)
+
 	// OnAction sets the callback for when a user performs an action.
 	OnAction(fn func(Action))
 
@@ -52,6 +55,8 @@ type ActionType int
 const (
 	// ActionOpenURL indicates the user wants to open a URL.
 	ActionOpenURL ActionType = iota
+	// ActionSync indicates the user wants to trigger a sync.
+	ActionSync
 )
 
 // Config holds UI configuration.

@@ -128,6 +128,9 @@ func (m *Menu) SetStale(stale bool) {
 	m.mu.Unlock()
 }
 
+// SetLoading is a no-op for the menu backend.
+func (m *Menu) SetLoading(loading bool) {}
+
 // OnAction sets the callback for user actions.
 func (m *Menu) OnAction(fn func(ui.Action)) {
 	m.onAction = fn
