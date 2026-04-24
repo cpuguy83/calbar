@@ -111,6 +111,7 @@ func (a *App) selectBackend() (ui.UI, error) {
 			TimeRange:         a.cfg.UI.TimeRange,
 			EventEndGrace:     a.cfg.UI.EventEndGrace,
 			HoverDismissDelay: *a.cfg.UI.HoverDismissDelay,
+			CSSFile:           a.cfg.UI.CSSFile,
 		}), nil
 
 	case "menu":
@@ -130,6 +131,7 @@ func (a *App) selectBackend() (ui.UI, error) {
 				TimeRange:         a.cfg.UI.TimeRange,
 				EventEndGrace:     a.cfg.UI.EventEndGrace,
 				HoverDismissDelay: *a.cfg.UI.HoverDismissDelay,
+				CSSFile:           a.cfg.UI.CSSFile,
 			}), nil
 		}
 		slog.Info("GTK not available, falling back to menu backend")

@@ -6,6 +6,8 @@ package ui
 import (
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -68,6 +70,7 @@ type Popup struct {
 	loading           bool
 	pointerInside     bool
 	hoverDismissDelay time.Duration
+	cssFile           string
 
 	dismissTimer uint
 	onJoin       func(url string)
@@ -357,12 +360,13 @@ func (p *Popup) getClickOutsideReleasedCb() *func(gtk.GestureClick, int, float64
 }
 
 // NewPopup creates a new popup window.
-func NewPopup(timeRange, eventEndGrace, hoverDismissDelay time.Duration) *Popup {
+func NewPopup(timeRange, eventEndGrace, hoverDismissDelay time.Duration, cssFile string) *Popup {
 	return &Popup{
 		timeRange:         timeRange,
 		eventEndGrace:     eventEndGrace,
 		loading:           true,
 		hoverDismissDelay: hoverDismissDelay,
+		cssFile:           cssFile,
 	}
 }
 
@@ -993,7 +997,33 @@ func (p *Popup) applyCSS() {
 
 	if display := gdk.DisplayGetDefault(); display != nil {
 		gtk.StyleContextAddProviderForDisplay(display, provider, uint(gtk.STYLE_PROVIDER_PRIORITY_APPLICATION))
+		if path, ok := p.userCSSPath(); ok {
+			userProvider := gtk.NewCssProvider()
+			userProvider.LoadFromPath(path)
+			gtk.StyleContextAddProviderForDisplay(display, userProvider, uint(gtk.STYLE_PROVIDER_PRIORITY_USER))
+			slog.Info("loaded custom GTK CSS", "path", path)
+		}
 	}
+}
+
+func (p *Popup) userCSSPath() (string, bool) {
+	path := p.cssFile
+	if path == "" {
+		configDir, err := os.UserConfigDir()
+		if err != nil {
+			slog.Debug("unable to determine user config dir for CSS", "error", err)
+			return "", false
+		}
+		path = filepath.Join(configDir, "calbar", "style.css")
+	}
+
+	if _, err := os.Stat(path); err != nil {
+		if !os.IsNotExist(err) {
+			slog.Warn("unable to stat custom GTK CSS", "path", path, "error", err)
+		}
+		return "", false
+	}
+	return path, true
 }
 
 // Show shows the popup window.

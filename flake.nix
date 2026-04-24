@@ -120,6 +120,7 @@
         { pkgs }:
         {
           default = pkgs.mkShell {
+            PUREGOTK_LIB_FOLDER = "${mkGtkLibFolder pkgs}/lib";
             buildInputs = with pkgs; [
               go
               gopls

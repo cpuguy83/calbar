@@ -16,7 +16,7 @@ type GTK struct {
 // NewGTK creates a new GTK UI backend.
 func NewGTK(cfg Config) *GTK {
 	return &GTK{
-		popup: NewPopup(cfg.TimeRange, cfg.EventEndGrace, cfg.HoverDismissDelay),
+		popup: NewPopup(cfg.TimeRange, cfg.EventEndGrace, cfg.HoverDismissDelay, cfg.CSSFile),
 	}
 }
 

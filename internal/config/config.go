@@ -103,6 +103,7 @@ type UIConfig struct {
 	MaxEvents         int            `yaml:"max_events"`          // Max events to show (default: 20)
 	Theme             string         `yaml:"theme"`               // "system", "light", "dark"
 	Backend           string         `yaml:"backend"`             // "auto", "gtk", "menu" (default: auto)
+	CSSFile           string         `yaml:"css_file,omitempty"`  // Optional GTK CSS override file
 	Menu              MenuConfig     `yaml:"menu"`                // Menu-specific configuration
 	EventEndGrace     time.Duration  `yaml:"event_end_grace"`     // Keep events visible after they end (default: 5m)
 	HoverDismissDelay *time.Duration `yaml:"hover_dismiss_delay"` // Delay before dismiss on pointer-leave (default: 5s, 0 = never auto-dismiss)
@@ -420,6 +421,7 @@ func (c *UIConfig) UnmarshalYAML(node *yaml.Node) error {
 		MaxEvents         int        `yaml:"max_events"`
 		Theme             string     `yaml:"theme"`
 		Backend           string     `yaml:"backend"`
+		CSSFile           string     `yaml:"css_file"`
 		Menu              MenuConfig `yaml:"menu"`
 		EventEndGrace     string     `yaml:"event_end_grace"`
 		HoverDismissDelay *string    `yaml:"hover_dismiss_delay"`
@@ -452,6 +454,7 @@ func (c *UIConfig) UnmarshalYAML(node *yaml.Node) error {
 	c.MaxEvents = raw.MaxEvents
 	c.Theme = raw.Theme
 	c.Backend = raw.Backend
+	c.CSSFile = expandPath(raw.CSSFile)
 	c.Menu = raw.Menu
 	return nil
 }

@@ -179,6 +179,11 @@ ui:
   # Delay before popup auto-dismisses when pointer leaves (default: 3s)
   # Set to "0s" to disable auto-dismiss on pointer leave
   # hover_dismiss_delay: 3s
+
+  # Optional GTK CSS override file.
+  # If unset, calbar also checks ~/.config/calbar/style.css automatically.
+  # Useful for matching swaync/waybar glass styling without patching calbar.
+  # css_file: ~/.config/calbar/style.css
   
   # dmenu-style backend configuration (used when backend is "menu" or GTK is unavailable)
   # menu:
