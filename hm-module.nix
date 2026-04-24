@@ -52,6 +52,21 @@ in
       '';
       description = "CalBar configuration. See config.example.yaml for options.";
     };
+
+    css = lib.mkOption {
+      type = lib.types.nullOr lib.types.lines;
+      default = null;
+      example = ''
+        .popup-container {
+          background: rgba(20, 20, 24, 0.72);
+          border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+      '';
+      description = ''
+        Optional GTK CSS overrides written to `~/.config/calbar/style.css`.
+        This only affects the GTK popup. Users can also set this to `builtins.readFile ./style.css`.
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -59,6 +74,10 @@ in
       {
         assertion = !(cfg.gtk.disable && cfg.package != pkgs.calbar);
         message = "services.calbar: Cannot set both gtk.disable and a custom package. Use either gtk.disable = true OR package = pkgs.calbar-lite.";
+      }
+      {
+        assertion = !(cfg.css != null && lib.hasAttrByPath [ "ui" "css_file" ] cfg.settings);
+        message = "services.calbar: css manages ~/.config/calbar/style.css; do not also set settings.ui.css_file.";
       }
     ];
 
@@ -68,6 +87,11 @@ in
 
     xdg.configFile."calbar/config.yaml" = lib.mkIf (cfg.settings != { }) {
       source = yamlFormat.generate "calbar-config.yaml" cfg.settings;
+      onChange = "systemctl --user restart calbar.service || true";
+    };
+
+    xdg.configFile."calbar/style.css" = lib.mkIf (cfg.css != null) {
+      text = cfg.css;
       onChange = "systemctl --user restart calbar.service || true";
     };
 

@@ -68,6 +68,12 @@ CalBar provides a Nix flake with multiple packages:
   services.calbar = {
     enable = true;
     # gtk.disable = true;  # Use dmenu-style launcher instead of GTK
+    css = ''
+      .popup-container {
+        background: rgba(20, 20, 24, 0.72);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+      }
+    '';
     settings = {
       sync.interval = "5m";
       sources = [
