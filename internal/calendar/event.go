@@ -38,6 +38,9 @@ type Event struct {
 	// URL is a URL associated with the event (if any).
 	URL string
 
+	// NotifyAt contains absolute reminder times for this event instance.
+	NotifyAt []time.Time
+
 	// Stale indicates this event is from a failed sync and may be outdated.
 	Stale bool
 }

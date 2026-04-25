@@ -585,3 +585,31 @@ password_cmd: "op read op://Vault/Cal/password"
 		}
 	})
 }
+
+func TestApplyDefaults_DoesNotSetNotificationOffsets(t *testing.T) {
+	var cfg Config
+	cfg.applyDefaults()
+
+	if cfg.Notifications.Before != nil {
+		t.Fatalf("Notifications.Before = %v, want nil", cfg.Notifications.Before)
+	}
+}
+
+func TestNotificationConfigUnmarshalBefore(t *testing.T) {
+	input := []byte("enabled: true\nbefore:\n  - 15m\n  - 5m\n")
+
+	var cfg NotificationConfig
+	if err := yaml.Unmarshal(input, &cfg); err != nil {
+		t.Fatalf("Unmarshal error: %v", err)
+	}
+
+	if !cfg.Enabled {
+		t.Fatal("expected notifications to be enabled")
+	}
+	if len(cfg.Before) != 2 {
+		t.Fatalf("expected 2 notification offsets, got %d", len(cfg.Before))
+	}
+	if cfg.Before[0] != 15*time.Minute || cfg.Before[1] != 5*time.Minute {
+		t.Fatalf("unexpected notification offsets: %v", cfg.Before)
+	}
+}

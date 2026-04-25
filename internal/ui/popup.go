@@ -62,17 +62,18 @@ type Popup struct {
 	detailsEvent      *calendar.Event
 	detailsFromHidden bool // true if viewing details from hidden events list
 
-	mu                sync.RWMutex
-	events            []calendar.Event
-	hiddenEvents      []calendar.Event
-	timeRange         time.Duration
-	eventEndGrace     time.Duration
-	stale             bool
-	lastSync          time.Time
-	loading           bool
-	pointerInside     bool
-	hoverDismissDelay time.Duration
-	cssFile           string
+	mu                 sync.RWMutex
+	events             []calendar.Event
+	hiddenEvents       []calendar.Event
+	timeRange          time.Duration
+	eventEndGrace      time.Duration
+	stale              bool
+	lastSync           time.Time
+	loading            bool
+	pointerInside      bool
+	hoverDismissDelay  time.Duration
+	notificationBefore []time.Duration
+	cssFile            string
 
 	dismissTimer uint
 	onJoin       func(url string)
@@ -435,13 +436,14 @@ func (p *Popup) getClickOutsideReleasedCb() *func(gtk.GestureClick, int, float64
 }
 
 // NewPopup creates a new popup window.
-func NewPopup(timeRange, eventEndGrace, hoverDismissDelay time.Duration, cssFile string) *Popup {
+func NewPopup(timeRange, eventEndGrace, hoverDismissDelay time.Duration, notificationBefore []time.Duration, cssFile string) *Popup {
 	return &Popup{
-		timeRange:         timeRange,
-		eventEndGrace:     eventEndGrace,
-		loading:           true,
-		hoverDismissDelay: hoverDismissDelay,
-		cssFile:           cssFile,
+		timeRange:          timeRange,
+		eventEndGrace:      eventEndGrace,
+		loading:            true,
+		hoverDismissDelay:  hoverDismissDelay,
+		notificationBefore: append([]time.Duration(nil), notificationBefore...),
+		cssFile:            cssFile,
 	}
 }
 
@@ -1907,6 +1909,10 @@ func (p *Popup) showDetails(event calendar.Event) {
 	if !event.AllDay && event.Duration() < 24*time.Hour {
 		duration := p.getEventDuration(event)
 		p.addDetailRow(content, "⏱", duration)
+	}
+
+	if reminderText := formatReminderDetails(event, p.notificationBefore); reminderText != "" {
+		p.addDetailRow(content, "🔔", reminderText)
 	}
 
 	// Location

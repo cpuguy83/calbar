@@ -150,11 +150,13 @@ filters:
 # -----------------------------------------------------------------------------
 notifications:
   enabled: true
-  
-  # When to send notifications before event start
-  before:
-    - 15m
-    - 5m
+
+  # Optional override for event-defined reminders.
+  # If unset, CalBar respects DISPLAY reminders from the calendar event itself.
+  # If set, these offsets replace any reminders defined on the event.
+  # before:
+  #   - 15m
+  #   - 5m
 
 # -----------------------------------------------------------------------------
 # UI Settings

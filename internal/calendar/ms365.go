@@ -135,6 +135,8 @@ type graphEvent struct {
 	OnlineMeeting    *graphOnlineMeeting  `json:"onlineMeeting,omitempty"`
 	Recurrence       *graphRecurrence     `json:"recurrence,omitempty"`
 	SeriesMasterID   string               `json:"seriesMasterId,omitempty"`
+	IsReminderOn     bool                 `json:"isReminderOn"`
+	ReminderMinutes  int                  `json:"reminderMinutesBeforeStart"`
 	ShowAs           string               `json:"showAs"`
 	ResponseStatus   *graphResponseStatus `json:"responseStatus,omitempty"`
 }
@@ -199,7 +201,7 @@ func (s *MS365Source) fetchCalendarView(ctx context.Context, accessToken string,
 	params.Set("$orderby", "start/dateTime")
 	params.Set("$top", "500") // Fetch up to 500 events
 	// Request specific fields to get full details including body
-	params.Set("$select", "id,subject,bodyPreview,body,start,end,location,isAllDay,isCancelled,organizer,webLink,onlineMeetingUrl,onlineMeeting,showAs,responseStatus,seriesMasterId,recurrence")
+	params.Set("$select", "id,subject,bodyPreview,body,start,end,location,isAllDay,isCancelled,organizer,webLink,onlineMeetingUrl,onlineMeeting,showAs,responseStatus,seriesMasterId,recurrence,isReminderOn,reminderMinutesBeforeStart")
 
 	reqURL := graphCalendarEndpoint + "?" + params.Encode()
 
@@ -341,6 +343,10 @@ func (s *MS365Source) convertEvent(ge graphEvent) (Event, error) {
 	// Detect effectively all-day events (midnight-to-midnight datetime encoding)
 	if !event.AllDay && isEffectivelyAllDay(event.Start, event.End) {
 		event.AllDay = true
+	}
+
+	if ge.IsReminderOn && ge.ReminderMinutes >= 0 {
+		event.NotifyAt = append(event.NotifyAt, event.Start.Add(-time.Duration(ge.ReminderMinutes)*time.Minute))
 	}
 
 	return event, nil

@@ -8,6 +8,7 @@ import (
 
 	"github.com/cpuguy83/calbar/internal/calendar"
 	"github.com/cpuguy83/calbar/internal/links"
+	"github.com/cpuguy83/calbar/internal/ui"
 )
 
 // formatEventList formats events for the main event list menu.
@@ -156,7 +157,7 @@ func formatEventLine(e *calendar.Event, now time.Time) string {
 
 // formatEventDetails formats event details for the details menu.
 // Returns lines to display and a map of line -> action URL.
-func formatEventDetails(e *calendar.Event) ([]string, map[string]string) {
+func formatEventDetails(e *calendar.Event, notificationBefore []time.Duration) ([]string, map[string]string) {
 	now := time.Now()
 	localStart := e.Start.Local()
 	localEnd := e.End.Local()
@@ -184,6 +185,12 @@ func formatEventDetails(e *calendar.Event) ([]string, map[string]string) {
 		timeRange := fmt.Sprintf("%s - %s", localStart.Format("15:04"), localEnd.Format("15:04"))
 		duration := formatDuration(e.End.Sub(e.Start))
 		lines = append(lines, fmt.Sprintf("  %s, %s (%s)", dayLabel, timeRange, duration))
+	}
+
+	if reminderText := ui.FormatReminderDetails(*e, notificationBefore); reminderText != "" {
+		for _, line := range strings.Split(reminderText, "\n") {
+			lines = append(lines, fmt.Sprintf("  🔔 %s", line))
+		}
 	}
 
 	// Location

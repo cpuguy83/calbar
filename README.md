@@ -25,6 +25,9 @@ A calendar tray app for Linux desktops, similar to [Dato](https://sindresorhus.c
 git clone https://github.com/cpuguy83/calbar.git
 cd calbar
 
+# On Nix/NixOS, enter the dev shell first so GTK and layer-shell libs are available
+nix develop
+
 # Build
 make build
 
@@ -40,6 +43,8 @@ sudo make install
 - Go 1.25+
 - D-Bus (for notifications and system tray)
 - GTK4 with libadwaita (optional - use `nogtk` build tag for dmenu-style launcher support)
+
+On Nix and NixOS, prefer running build/test commands from `nix develop` so the GTK4 and `libgtk4-layer-shell` runtime dependencies are present.
 
 ### NixOS / Home Manager
 
@@ -166,9 +171,12 @@ filters:
 # Notification settings
 notifications:
   enabled: true
-  before:
-    - 15m
-    - 5m
+  # Optional override for event-defined DISPLAY reminders.
+  # If unset, CalBar uses the reminder times from the event itself.
+  # If set, these offsets replace the event-defined reminders.
+  # before:
+  #   - 15m
+  #   - 5m
 
 # UI settings
 ui:

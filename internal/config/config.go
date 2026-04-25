@@ -183,9 +183,6 @@ func (c *Config) applyDefaults() {
 		d := 3 * time.Second
 		c.UI.HoverDismissDelay = &d // Default: 3 seconds
 	}
-	if c.Notifications.Before == nil {
-		c.Notifications.Before = []time.Duration{15 * time.Minute, 5 * time.Minute}
-	}
 }
 
 // runCmd executes a shell command and returns its trimmed stdout.

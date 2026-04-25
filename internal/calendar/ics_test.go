@@ -1,6 +1,7 @@
 package calendar
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -183,6 +184,149 @@ END:VCALENDAR`
 		}
 		if got := events[0].End.In(gmt); !got.Equal(wantEnd) {
 			t.Fatalf("unexpected end: got %s want %s", got, wantEnd)
+		}
+	}
+}
+
+func TestParseEvent_DisplayAlarmTrigger(t *testing.T) {
+	start := time.Now().Add(2 * time.Hour).Truncate(time.Second)
+	end := start.Add(time.Hour)
+
+	icsData := fmt.Sprintf(`BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:test-display-alarm
+SUMMARY:Meeting
+DTSTART:%s
+DTEND:%s
+BEGIN:VALARM
+ACTION:DISPLAY
+TRIGGER:-PT15M
+END:VALARM
+END:VEVENT
+END:VCALENDAR`, start.Format("20060102T150405"), end.Format("20060102T150405"))
+
+	dec := ics.NewDecoder(strings.NewReader(icsData))
+	cal, err := dec.Decode()
+	if err != nil {
+		t.Fatalf("failed to decode ICS: %v", err)
+	}
+
+	s := &ICSSource{name: "test", end: end.Add(24 * time.Hour)}
+
+	for _, child := range cal.Children {
+		if child.Name != ics.CompEvent {
+			continue
+		}
+
+		events, err := s.parseEvent(child)
+		if err != nil {
+			t.Fatalf("parseEvent error: %v", err)
+		}
+		if len(events) != 1 {
+			t.Fatalf("expected 1 event, got %d", len(events))
+		}
+		if len(events[0].NotifyAt) != 1 {
+			t.Fatalf("expected 1 reminder, got %d", len(events[0].NotifyAt))
+		}
+
+		want := start.Add(-15 * time.Minute)
+		if got := events[0].NotifyAt[0]; !got.Equal(want) {
+			t.Fatalf("unexpected reminder time: got %s want %s", got, want)
+		}
+	}
+}
+
+func TestParseEvent_IgnoresNonDisplayAlarm(t *testing.T) {
+	start := time.Now().Add(2 * time.Hour).Truncate(time.Second)
+	end := start.Add(time.Hour)
+
+	icsData := fmt.Sprintf(`BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:test-email-alarm
+SUMMARY:Meeting
+DTSTART:%s
+DTEND:%s
+BEGIN:VALARM
+ACTION:EMAIL
+TRIGGER:-PT15M
+END:VALARM
+END:VEVENT
+END:VCALENDAR`, start.Format("20060102T150405"), end.Format("20060102T150405"))
+
+	dec := ics.NewDecoder(strings.NewReader(icsData))
+	cal, err := dec.Decode()
+	if err != nil {
+		t.Fatalf("failed to decode ICS: %v", err)
+	}
+
+	s := &ICSSource{name: "test", end: end.Add(24 * time.Hour)}
+
+	for _, child := range cal.Children {
+		if child.Name != ics.CompEvent {
+			continue
+		}
+
+		events, err := s.parseEvent(child)
+		if err != nil {
+			t.Fatalf("parseEvent error: %v", err)
+		}
+		if len(events) != 1 {
+			t.Fatalf("expected 1 event, got %d", len(events))
+		}
+		if len(events[0].NotifyAt) != 0 {
+			t.Fatalf("expected no reminders, got %d", len(events[0].NotifyAt))
+		}
+	}
+}
+
+func TestParseEvent_RecurringDisplayAlarmUsesOccurrenceStart(t *testing.T) {
+	start := time.Now().Add(2 * time.Hour).Truncate(time.Second)
+	end := start.Add(time.Hour)
+	until := start.Add(48 * time.Hour)
+
+	icsData := fmt.Sprintf(`BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:test-recurring-alarm
+SUMMARY:Recurring meeting
+DTSTART:%s
+DTEND:%s
+RRULE:FREQ=DAILY;COUNT=2
+BEGIN:VALARM
+ACTION:DISPLAY
+TRIGGER:-PT10M
+END:VALARM
+END:VEVENT
+END:VCALENDAR`, start.Format("20060102T150405"), end.Format("20060102T150405"))
+
+	dec := ics.NewDecoder(strings.NewReader(icsData))
+	cal, err := dec.Decode()
+	if err != nil {
+		t.Fatalf("failed to decode ICS: %v", err)
+	}
+
+	s := &ICSSource{name: "test", end: until}
+
+	for _, child := range cal.Children {
+		if child.Name != ics.CompEvent {
+			continue
+		}
+
+		events, err := s.parseEvent(child)
+		if err != nil {
+			t.Fatalf("parseEvent error: %v", err)
+		}
+		if len(events) != 2 {
+			t.Fatalf("expected 2 events, got %d", len(events))
+		}
+
+		for i, event := range events {
+			if len(event.NotifyAt) != 1 {
+				t.Fatalf("event %d expected 1 reminder, got %d", i, len(event.NotifyAt))
+			}
+			want := event.Start.Add(-10 * time.Minute)
+			if got := event.NotifyAt[0]; !got.Equal(want) {
+				t.Fatalf("event %d unexpected reminder time: got %s want %s", i, got, want)
+			}
 		}
 	}
 }

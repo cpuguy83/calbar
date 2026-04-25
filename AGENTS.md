@@ -9,12 +9,20 @@ Go 1.25+, MIT license.
 
 ## Build
 
+On Nix and NixOS, enter the dev shell first so GTK and layer-shell libraries are available:
+
+```sh
+nix develop
+```
+
 ```sh
 make build    # go build -o calbar ./cmd/calbar
 make test     # go test ./...
 ```
 
 Nix: `nix build` produces three variants — `calbar` (GTK4, NixOS-wrapped), `calbar-unwrapped`, `calbar-lite` (no GTK, `nogtk` tag).
+
+If GTK-linked tests fail with missing `libgtk4-layer-shell.so.0`, run them from `nix develop` or use the `nogtk` tag for non-GTK checks.
 
 ## Build Tags
 

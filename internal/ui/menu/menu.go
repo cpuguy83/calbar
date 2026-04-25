@@ -16,10 +16,11 @@ import (
 
 // Config holds menu UI configuration.
 type Config struct {
-	Program       string   // dmenu program to use (auto-detect if empty)
-	Args          []string // extra args to pass to the program
-	TimeRange     time.Duration
-	EventEndGrace time.Duration // Keep events visible after they end
+	Program            string   // dmenu program to use (auto-detect if empty)
+	Args               []string // extra args to pass to the program
+	TimeRange          time.Duration
+	EventEndGrace      time.Duration // Keep events visible after they end
+	NotificationBefore []time.Duration
 }
 
 // Menu implements the ui.UI interface using dmenu-style launchers.
@@ -203,7 +204,7 @@ func (m *Menu) showEventList(events, hiddenEvents []calendar.Event) {
 
 // showEventDetails displays event details and handles selection.
 func (m *Menu) showEventDetails(event *calendar.Event, allEvents, hiddenEvents []calendar.Event) {
-	lines, urlMap := formatEventDetails(event)
+	lines, urlMap := formatEventDetails(event, m.cfg.NotificationBefore)
 
 	slog.Debug("showing event details menu", "eventSummary", event.Summary, "lineCount", len(lines))
 

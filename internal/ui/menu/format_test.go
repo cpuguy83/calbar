@@ -1,6 +1,7 @@
 package menu
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -66,5 +67,41 @@ func TestFormatAllDayRange_UsesRelativeDays(t *testing.T) {
 	got := formatAllDayRange(e, now)
 	if got != "Today – Tomorrow" {
 		t.Errorf("expected 'Today – Tomorrow', got %q", got)
+	}
+}
+
+func TestFormatEventDetails_ShowsEventReminderDetails(t *testing.T) {
+	start := time.Date(2026, 2, 17, 10, 0, 0, 0, time.Local)
+	lines, _ := formatEventDetails(&calendar.Event{
+		Summary:  "Standup",
+		Start:    start,
+		End:      start.Add(30 * time.Minute),
+		NotifyAt: []time.Time{start.Add(-15 * time.Minute)},
+	}, nil)
+
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "Using event reminders") {
+		t.Fatalf("expected event reminder label, got %q", joined)
+	}
+	if !strings.Contains(joined, "15 minutes before start") {
+		t.Fatalf("expected reminder offset, got %q", joined)
+	}
+}
+
+func TestFormatEventDetails_ShowsOverrideReminderDetails(t *testing.T) {
+	start := time.Date(2026, 2, 17, 10, 0, 0, 0, time.Local)
+	lines, _ := formatEventDetails(&calendar.Event{
+		Summary:  "Standup",
+		Start:    start,
+		End:      start.Add(30 * time.Minute),
+		NotifyAt: []time.Time{start.Add(-15 * time.Minute)},
+	}, []time.Duration{0})
+
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "Using config override") {
+		t.Fatalf("expected override label, got %q", joined)
+	}
+	if !strings.Contains(joined, "at start") {
+		t.Fatalf("expected at-start reminder, got %q", joined)
 	}
 }

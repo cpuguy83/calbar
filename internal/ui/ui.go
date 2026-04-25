@@ -61,8 +61,9 @@ const (
 
 // Config holds UI configuration.
 type Config struct {
-	TimeRange         time.Duration
-	EventEndGrace     time.Duration // Keep events visible after they end
-	HoverDismissDelay time.Duration // Delay before dismiss on pointer-leave (0 = never auto-dismiss)
-	CSSFile           string
+	TimeRange          time.Duration
+	EventEndGrace      time.Duration // Keep events visible after they end
+	HoverDismissDelay  time.Duration // Delay before dismiss on pointer-leave (0 = never auto-dismiss)
+	NotificationBefore []time.Duration
+	CSSFile            string
 }

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"slices"
+	"sort"
 	gosync "sync"
 	"time"
 
@@ -109,19 +110,21 @@ func (a *App) selectBackend() (ui.UI, error) {
 		}
 		slog.Info("using GTK backend")
 		return ui.NewGTK(ui.Config{
-			TimeRange:         a.cfg.UI.TimeRange,
-			EventEndGrace:     a.cfg.UI.EventEndGrace,
-			HoverDismissDelay: *a.cfg.UI.HoverDismissDelay,
-			CSSFile:           a.cfg.UI.CSSFile,
+			TimeRange:          a.cfg.UI.TimeRange,
+			EventEndGrace:      a.cfg.UI.EventEndGrace,
+			HoverDismissDelay:  *a.cfg.UI.HoverDismissDelay,
+			NotificationBefore: a.cfg.Notifications.Before,
+			CSSFile:            a.cfg.UI.CSSFile,
 		}), nil
 
 	case "menu":
 		slog.Info("using menu backend")
 		return menu.New(menu.Config{
-			Program:       a.cfg.UI.Menu.Program,
-			Args:          a.cfg.UI.Menu.Args,
-			TimeRange:     a.cfg.UI.TimeRange,
-			EventEndGrace: a.cfg.UI.EventEndGrace,
+			Program:            a.cfg.UI.Menu.Program,
+			Args:               a.cfg.UI.Menu.Args,
+			TimeRange:          a.cfg.UI.TimeRange,
+			EventEndGrace:      a.cfg.UI.EventEndGrace,
+			NotificationBefore: a.cfg.Notifications.Before,
 		})
 
 	case "auto", "":
@@ -129,18 +132,20 @@ func (a *App) selectBackend() (ui.UI, error) {
 		if ui.GTKAvailable() {
 			slog.Info("auto-selected GTK backend")
 			return ui.NewGTK(ui.Config{
-				TimeRange:         a.cfg.UI.TimeRange,
-				EventEndGrace:     a.cfg.UI.EventEndGrace,
-				HoverDismissDelay: *a.cfg.UI.HoverDismissDelay,
-				CSSFile:           a.cfg.UI.CSSFile,
+				TimeRange:          a.cfg.UI.TimeRange,
+				EventEndGrace:      a.cfg.UI.EventEndGrace,
+				HoverDismissDelay:  *a.cfg.UI.HoverDismissDelay,
+				NotificationBefore: a.cfg.Notifications.Before,
+				CSSFile:            a.cfg.UI.CSSFile,
 			}), nil
 		}
 		slog.Info("GTK not available, falling back to menu backend")
 		return menu.New(menu.Config{
-			Program:       a.cfg.UI.Menu.Program,
-			Args:          a.cfg.UI.Menu.Args,
-			TimeRange:     a.cfg.UI.TimeRange,
-			EventEndGrace: a.cfg.UI.EventEndGrace,
+			Program:            a.cfg.UI.Menu.Program,
+			Args:               a.cfg.UI.Menu.Args,
+			TimeRange:          a.cfg.UI.TimeRange,
+			EventEndGrace:      a.cfg.UI.EventEndGrace,
+			NotificationBefore: a.cfg.Notifications.Before,
 		})
 
 	default:
@@ -589,25 +594,19 @@ func (a *App) checkNotifications() {
 			continue
 		}
 
-		startsIn := e.Start.Sub(now)
-		if startsIn < 0 {
-			continue
-		}
-
-		// Check each notification threshold
-		for _, before := range a.cfg.Notifications.Before {
-			// Check if we're within the notification window
-			if startsIn <= before && startsIn > before-time.Minute {
-				key := e.UID + "-" + before.String()
-
-				// Check if already notified
-				if _, ok := a.notifiedEvents[key]; ok {
-					continue
-				}
-
-				a.sendNotification(e, startsIn)
-				a.notifiedEvents[key] = now
+		for _, trigger := range a.notificationTriggers(e) {
+			if trigger.Before(now) || trigger.After(now.Add(time.Minute)) {
+				continue
 			}
+
+			key := fmt.Sprintf("%s-%d", e.UID, trigger.Unix())
+			if _, ok := a.notifiedEvents[key]; ok {
+				continue
+			}
+
+			startsIn := e.Start.Sub(now)
+			a.sendNotification(e, startsIn)
+			a.notifiedEvents[key] = now
 		}
 	}
 
@@ -618,6 +617,38 @@ func (a *App) checkNotifications() {
 			delete(a.notifiedEvents, k)
 		}
 	}
+}
+
+func (a *App) notificationTriggers(event calendar.Event) []time.Time {
+	if a.cfg.Notifications.Before != nil {
+		triggers := make([]time.Time, 0, len(a.cfg.Notifications.Before))
+		for _, before := range a.cfg.Notifications.Before {
+			triggers = append(triggers, event.Start.Add(-before))
+		}
+		return dedupeTimes(triggers)
+	}
+
+	return dedupeTimes(event.NotifyAt)
+}
+
+func dedupeTimes(times []time.Time) []time.Time {
+	if len(times) < 2 {
+		return times
+	}
+
+	clone := append([]time.Time(nil), times...)
+	sort.Slice(clone, func(i, j int) bool {
+		return clone[i].Before(clone[j])
+	})
+
+	result := clone[:0]
+	for _, t := range clone {
+		if len(result) > 0 && result[len(result)-1].Equal(t) {
+			continue
+		}
+		result = append(result, t)
+	}
+	return result
 }
 
 // sendNotification sends a notification for an event.

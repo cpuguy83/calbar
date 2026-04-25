@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	ics "github.com/emersion/go-ical"
@@ -203,6 +204,7 @@ func (s *ICSSource) parseEvent(comp *ics.Component) ([]Event, error) {
 		base.Start = startTime
 		base.End = startTime.Add(duration)
 		base.AllDay = isAllDay || isEffectivelyAllDay(base.Start, base.End)
+		base.NotifyAt = parseDisplayAlarms(comp, base.Start, base.End)
 		return []Event{base}, nil
 	}
 
@@ -220,6 +222,7 @@ func (s *ICSSource) parseEvent(comp *ics.Component) ([]Event, error) {
 		event.Start = occ
 		event.End = occ.Add(duration)
 		event.AllDay = isAllDay || isEffectivelyAllDay(event.Start, event.End)
+		event.NotifyAt = parseDisplayAlarms(comp, event.Start, event.End)
 		// Make UID unique per occurrence
 		event.UID = fmt.Sprintf("%s_%d", base.UID, occ.Unix())
 		events = append(events, event)
@@ -237,4 +240,53 @@ func parseDateOnly(s string) (time.Time, error) {
 // This handles "floating time" values that are neither UTC nor have a TZID.
 func parseDateTime(s string) (time.Time, error) {
 	return time.ParseInLocation("20060102T150405", s, time.Local)
+}
+
+func parseDisplayAlarms(comp *ics.Component, start, end time.Time) []time.Time {
+	var notifyAt []time.Time
+	for _, child := range comp.Children {
+		if child.Name != ics.CompAlarm {
+			continue
+		}
+
+		action := child.Props.Get(ics.PropAction)
+		if action == nil || !strings.EqualFold(action.Value, "DISPLAY") {
+			continue
+		}
+
+		trigger := child.Props.Get(ics.PropTrigger)
+		if trigger == nil {
+			continue
+		}
+
+		notifyTime, ok := parseAlarmTrigger(trigger, start, end)
+		if !ok {
+			continue
+		}
+
+		notifyAt = append(notifyAt, notifyTime)
+	}
+	return notifyAt
+}
+
+func parseAlarmTrigger(trigger *ics.Prop, start, end time.Time) (time.Time, bool) {
+	if trigger == nil {
+		return time.Time{}, false
+	}
+
+	if dt, err := trigger.DateTime(time.Local); err == nil {
+		return dt, true
+	}
+
+	dur, err := trigger.Duration()
+	if err != nil {
+		return time.Time{}, false
+	}
+
+	reference := start
+	if strings.EqualFold(trigger.Params.Get(ics.ParamRelated), "END") {
+		reference = end
+	}
+
+	return reference.Add(dur), true
 }

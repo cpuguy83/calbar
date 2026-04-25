@@ -137,6 +137,10 @@ func (s *CalDAVSource) fetchCalendarEvents(ctx context.Context, client *caldav.C
 					"URL",
 					"ORGANIZER",
 				},
+				Comps: []caldav.CalendarCompRequest{{
+					Name:  ics.CompAlarm,
+					Props: []string{ics.PropAction, ics.PropTrigger},
+				}},
 			}},
 		},
 		CompFilter: caldav.CompFilter{
@@ -263,6 +267,8 @@ func (s *CalDAVSource) parseEventComponent(comp *ics.Component, calName string) 
 	if !event.AllDay && isEffectivelyAllDay(event.Start, event.End) {
 		event.AllDay = true
 	}
+
+	event.NotifyAt = parseDisplayAlarms(comp, event.Start, event.End)
 
 	return event, nil
 }
