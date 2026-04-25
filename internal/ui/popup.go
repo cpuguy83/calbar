@@ -1485,6 +1485,11 @@ func (p *Popup) getDayLabel(t time.Time, now time.Time) string {
 func (p *Popup) createTimedEventRow(event calendar.Event, now time.Time) *gtk.Box {
 	row := gtk.NewBox(gtk.OrientationHorizontalValue, 0)
 	row.AddCssClass("event-card")
+	if event.IsOngoing(now) {
+		row.AddCssClass("ongoing")
+	} else if startsIn := event.Start.Sub(now); startsIn <= 15*time.Minute && startsIn > 0 {
+		row.AddCssClass("imminent")
+	}
 
 	// Store event for lookup
 	eventCopy := event
