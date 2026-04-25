@@ -45,10 +45,17 @@ func main() {
 
 	// Load configuration
 	var cfg *config.Config
+	var resolvedConfigPath string
 	var err error
 	if *configPath != "" {
+		resolvedConfigPath = config.ResolvePath(*configPath)
 		cfg, err = config.LoadFrom(*configPath)
 	} else {
+		resolvedConfigPath, err = config.DefaultPath()
+		if err != nil {
+			slog.Error("failed to resolve config path", "error", err)
+			os.Exit(1)
+		}
 		cfg, err = config.Load()
 	}
 	if err != nil {
@@ -65,6 +72,8 @@ func main() {
 	// Create app
 	app := &App{
 		cfg:             cfg,
+		configPath:      resolvedConfigPath,
+		quitCh:          make(chan struct{}),
 		notifiedEvents:  make(map[string]time.Time),
 		notificationIDs: make(map[uint32]string),
 	}
@@ -77,11 +86,12 @@ func main() {
 
 // App is the main calbar application.
 type App struct {
-	cfg      *config.Config
-	tray     *tray.Tray
-	ui       ui.UI
-	notifier *notify.Notifier
-	syncer   *sync.Syncer
+	cfg        *config.Config
+	configPath string
+	tray       *tray.Tray
+	ui         ui.UI
+	notifier   *notify.Notifier
+	syncer     *sync.Syncer
 
 	mu            gosync.RWMutex
 	events        []calendar.Event
@@ -97,6 +107,10 @@ type App struct {
 	// Context for background goroutines
 	ctx    context.Context
 	cancel context.CancelFunc
+
+	quitOnce gosync.Once
+	quitCh   chan struct{}
+	quitFn   func()
 }
 
 // selectBackend determines which UI backend to use based on config.
@@ -213,6 +227,14 @@ func (a *App) activate() error {
 		slog.Debug("tray activated, toggling UI")
 		a.ui.Toggle()
 	})
+	a.tray.OnOpenConfig(func() {
+		if err := a.OpenConfig(); err != nil {
+			slog.Warn("failed to open config", "path", a.configPath, "error", err)
+		}
+	})
+	a.tray.OnQuit(func() {
+		a.Quit()
+	})
 
 	if err := a.tray.Start(); err != nil {
 		return fmt.Errorf("start tray: %w", err)
@@ -265,6 +287,27 @@ func (a *App) activate() error {
 	)
 
 	return nil
+}
+
+// OpenConfig opens the active config file in the desktop's default handler.
+func (a *App) OpenConfig() error {
+	if a.configPath == "" {
+		return fmt.Errorf("config path is not set")
+	}
+	return links.OpenPath(a.configPath)
+}
+
+// Quit requests application shutdown through the active runtime loop.
+func (a *App) Quit() {
+	a.quitOnce.Do(func() {
+		if a.cancel != nil {
+			a.cancel()
+		}
+		if a.quitFn != nil {
+			a.quitFn()
+		}
+		close(a.quitCh)
+	})
 }
 
 // cleanup releases resources when the app is shutting down.

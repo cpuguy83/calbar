@@ -40,6 +40,13 @@ func (a *App) Run() error {
 // runWithGTK runs the application with GTK main loop.
 func (a *App) runWithGTK() error {
 	gtkApp := gtk.NewApplication("com.github.cpuguy83.calbar", gio.GApplicationFlagsNoneValue)
+	a.quitFn = func() {
+		var cb glib.SourceFunc = func(data uintptr) bool {
+			gtkApp.Quit()
+			return false
+		}
+		glib.IdleAdd(&cb, 0)
+	}
 
 	activateCb := func(app gio.Application) {
 		// Hold the application open even without visible windows
@@ -58,14 +65,7 @@ func (a *App) runWithGTK() error {
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 		<-sigCh
 		slog.Info("received signal, shutting down")
-		if a.cancel != nil {
-			a.cancel()
-		}
-		var cb glib.SourceFunc = func(data uintptr) bool {
-			gtkApp.Quit()
-			return false
-		}
-		glib.IdleAdd(&cb, 0)
+		a.Quit()
 	}()
 
 	// Run GTK main loop (blocks until app.Quit() is called)
@@ -83,13 +83,17 @@ func (a *App) runWithoutGTK() error {
 	if err := a.activate(); err != nil {
 		return fmt.Errorf("activation failed: %w", err)
 	}
+	a.quitFn = nil
 
-	// Wait for signal
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	<-sigCh
+	select {
+	case <-sigCh:
+		slog.Info("received signal, shutting down")
+		a.Quit()
+	case <-a.quitCh:
+	}
 
-	slog.Info("received signal, shutting down")
 	a.cleanup()
 	return nil
 }

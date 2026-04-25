@@ -115,20 +115,32 @@ type MenuConfig struct {
 	Args    []string `yaml:"args"`    // extra args to pass to the program
 }
 
-// Load reads configuration from the default location (~/.config/calbar/config.yaml).
-func Load() (*Config, error) {
+// DefaultPath returns the default config path (~/.config/calbar/config.yaml).
+func DefaultPath() (string, error) {
 	configDir, err := os.UserConfigDir()
 	if err != nil {
-		return nil, fmt.Errorf("get config dir: %w", err)
+		return "", fmt.Errorf("get config dir: %w", err)
 	}
+	return filepath.Join(configDir, "calbar", "config.yaml"), nil
+}
 
-	path := filepath.Join(configDir, "calbar", "config.yaml")
+// ResolvePath expands user-relative config paths.
+func ResolvePath(path string) string {
+	return expandPath(path)
+}
+
+// Load reads configuration from the default location (~/.config/calbar/config.yaml).
+func Load() (*Config, error) {
+	path, err := DefaultPath()
+	if err != nil {
+		return nil, err
+	}
 	return LoadFrom(path)
 }
 
 // LoadFrom reads configuration from a specific path.
 func LoadFrom(path string) (*Config, error) {
-	path = expandPath(path)
+	path = ResolvePath(path)
 
 	data, err := os.ReadFile(path)
 	if err != nil {

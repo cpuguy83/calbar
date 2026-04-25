@@ -90,6 +90,11 @@ func Open(url string) error {
 	return exec.Command("xdg-open", url).Start()
 }
 
+// OpenPath opens a local path using the desktop's default handler.
+func OpenPath(path string) error {
+	return exec.Command("xdg-open", path).Start()
+}
+
 // Service returns the name of the meeting service for a URL.
 func Service(url string) string {
 	switch {

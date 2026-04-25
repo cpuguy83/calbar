@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"slices"
 
 	"github.com/godbus/dbus/v5"
 	"github.com/godbus/dbus/v5/introspect"
@@ -15,6 +16,8 @@ const (
 	// D-Bus interface names
 	sniInterface     = "org.kde.StatusNotifierItem"
 	sniPath          = "/StatusNotifierItem"
+	menuInterface    = "com.canonical.dbusmenu"
+	menuPath         = sniPath + "/Menu"
 	watcherInterface = "org.kde.StatusNotifierWatcher"
 	watcherPath      = "/StatusNotifierWatcher"
 	watcherBusName   = "org.kde.StatusNotifierWatcher"
@@ -42,9 +45,12 @@ type Tray struct {
 
 	state   State
 	tooltip toolTip
+	menu    dbusMenu
 
 	// Callbacks
-	onActivate func() // Called when tray icon is clicked
+	onActivate   func() // Called when tray icon is clicked
+	onOpenConfig func()
+	onQuit       func()
 
 	// For clean shutdown of watcher goroutine
 	stopCh chan struct{}
@@ -66,6 +72,7 @@ func New() (*Tray, error) {
 			Body:  "CalBar",
 		},
 	}
+	t.menu.tray = t
 
 	return t, nil
 }
@@ -93,6 +100,9 @@ func (t *Tray) Start() error {
 	if err := t.conn.Export(t, sniPath, sniInterface); err != nil {
 		return fmt.Errorf("export SNI interface: %w", err)
 	}
+	if err := t.conn.Export(&t.menu, menuPath, menuInterface); err != nil {
+		return fmt.Errorf("export menu interface: %w", err)
+	}
 
 	// Setup properties using godbus prop package
 	propsSpec := prop.Map{
@@ -104,7 +114,7 @@ func (t *Tray) Start() error {
 			"IconName":      {Value: "", Writable: false, Emit: prop.EmitTrue},
 			"IconPixmap":    {Value: t.getIconPixmap(), Writable: false, Emit: prop.EmitTrue},
 			"IconThemePath": {Value: "", Writable: false, Emit: prop.EmitFalse},
-			"Menu":          {Value: dbus.ObjectPath("/NO_DBUSMENU"), Writable: false, Emit: prop.EmitFalse},
+			"Menu":          {Value: dbus.ObjectPath(menuPath), Writable: false, Emit: prop.EmitFalse},
 			"ItemIsMenu":    {Value: false, Writable: false, Emit: prop.EmitFalse},
 			"ToolTip":       {Value: t.getToolTip(), Writable: false, Emit: prop.EmitTrue},
 		},
@@ -118,7 +128,8 @@ func (t *Tray) Start() error {
 
 	// Export introspection data
 	node := &introspect.Node{
-		Name: sniPath,
+		Name:     sniPath,
+		Children: []introspect.Node{{Name: "Menu"}},
 		Interfaces: []introspect.Interface{
 			introspect.IntrospectData,
 			prop.IntrospectData,
@@ -131,6 +142,16 @@ func (t *Tray) Start() error {
 	}
 	if err := t.conn.Export(introspect.NewIntrospectable(node), sniPath, "org.freedesktop.DBus.Introspectable"); err != nil {
 		return fmt.Errorf("export introspection: %w", err)
+	}
+	menuNode := &introspect.Node{
+		Name: menuPath,
+		Interfaces: []introspect.Interface{
+			introspect.IntrospectData,
+			{Name: menuInterface, Methods: menuMethods, Signals: menuSignals},
+		},
+	}
+	if err := t.conn.Export(introspect.NewIntrospectable(menuNode), menuPath, "org.freedesktop.DBus.Introspectable"); err != nil {
+		return fmt.Errorf("export menu introspection: %w", err)
 	}
 
 	// Initial registration with the watcher
@@ -243,6 +264,16 @@ func (t *Tray) OnActivate(fn func()) {
 	t.onActivate = fn
 }
 
+// OnOpenConfig sets the callback for the tray menu's Open Config action.
+func (t *Tray) OnOpenConfig(fn func()) {
+	t.onOpenConfig = fn
+}
+
+// OnQuit sets the callback for the tray menu's Exit action.
+func (t *Tray) OnQuit(fn func()) {
+	t.onQuit = fn
+}
+
 // getToolTip returns the current tooltip struct.
 func (t *Tray) getToolTip() toolTip {
 	return t.tooltip
@@ -307,6 +338,153 @@ func (t *Tray) Scroll(delta int32, orientation string) *dbus.Error {
 func (t *Tray) ContextMenu(x, y int32) *dbus.Error {
 	slog.Debug("tray context menu", "x", x, "y", y)
 	return nil
+}
+
+type menuItem struct {
+	ID         int32
+	Label      string
+	Activation func()
+}
+
+type menuItemProps map[string]dbus.Variant
+
+type menuLayout struct {
+	ID         int32
+	Properties menuItemProps
+	Children   []dbus.Variant
+}
+
+type menuProperty struct {
+	ID         int32
+	Properties menuItemProps
+}
+
+type dbusMenu struct {
+	tray     *Tray
+	revision uint32
+}
+
+func (m *dbusMenu) items() []menuItem {
+	return []menuItem{
+		{ID: 1, Label: "Open Config", Activation: m.tray.onOpenConfig},
+		{ID: 2, Label: "Exit", Activation: m.tray.onQuit},
+	}
+}
+
+func (m *dbusMenu) GetLayout(parentID int32, recursionDepth int32, propertyNames []string) (uint32, menuLayout, *dbus.Error) {
+	children := make([]dbus.Variant, 0, len(m.items()))
+	for _, item := range m.items() {
+		if parentID != 0 && parentID != item.ID {
+			continue
+		}
+		children = append(children, dbus.MakeVariant(menuLayout{ID: item.ID, Properties: m.propertiesFor(item, propertyNames)}))
+	}
+	if parentID != 0 {
+		for _, child := range children {
+			layout, ok := child.Value().(menuLayout)
+			if !ok {
+				continue
+			}
+			if layout.ID == parentID {
+				return m.revision, layout, nil
+			}
+		}
+		return m.revision, menuLayout{}, dbus.MakeFailedError(fmt.Errorf("unknown menu item %d", parentID))
+	}
+	return m.revision, menuLayout{ID: 0, Properties: menuItemProps{}, Children: children}, nil
+}
+
+func (m *dbusMenu) GetGroupProperties(ids []int32, propertyNames []string) ([]menuProperty, *dbus.Error) {
+	items := m.items()
+	result := make([]menuProperty, 0, len(ids))
+	for _, id := range ids {
+		for _, item := range items {
+			if item.ID != id {
+				continue
+			}
+			result = append(result, menuProperty{ID: item.ID, Properties: m.propertiesFor(item, propertyNames)})
+			break
+		}
+	}
+	return result, nil
+}
+
+func (m *dbusMenu) Event(id int32, eventID string, data dbus.Variant, timestamp uint32) *dbus.Error {
+	if eventID != "clicked" {
+		return nil
+	}
+	for _, item := range m.items() {
+		if item.ID != id {
+			continue
+		}
+		if item.Activation != nil {
+			go item.Activation()
+		}
+		return nil
+	}
+	return dbus.MakeFailedError(fmt.Errorf("unknown menu item %d", id))
+}
+
+func (m *dbusMenu) AboutToShow(id int32) (bool, *dbus.Error) {
+	return false, nil
+}
+
+func (m *dbusMenu) propertiesFor(item menuItem, propertyNames []string) menuItemProps {
+	props := menuItemProps{
+		"label":   dbus.MakeVariant(item.Label),
+		"enabled": dbus.MakeVariant(item.Activation != nil),
+		"visible": dbus.MakeVariant(true),
+	}
+	if len(propertyNames) == 0 {
+		return props
+	}
+	filtered := make(menuItemProps, len(propertyNames))
+	for _, name := range propertyNames {
+		if value, ok := props[name]; ok {
+			filtered[name] = value
+		}
+	}
+	return filtered
+}
+
+func (m *dbusMenu) GetProperty(id int32, name string) (dbus.Variant, *dbus.Error) {
+	for _, item := range m.items() {
+		if item.ID != id {
+			continue
+		}
+		props := m.propertiesFor(item, []string{name})
+		if value, ok := props[name]; ok {
+			return value, nil
+		}
+		break
+	}
+	return dbus.Variant{}, dbus.MakeFailedError(fmt.Errorf("unknown menu property %q for item %d", name, id))
+}
+
+func (m *dbusMenu) EventGroup(events []struct {
+	ID        int32
+	EventID   string
+	Data      dbus.Variant
+	Timestamp uint32
+}) ([]int32, []int32, *dbus.Error) {
+	processed := make([]int32, 0, len(events))
+	for _, event := range events {
+		if err := m.Event(event.ID, event.EventID, event.Data, event.Timestamp); err != nil {
+			return processed, nil, err
+		}
+		processed = append(processed, event.ID)
+	}
+	return processed, nil, nil
+}
+
+func (m *dbusMenu) AboutToShowGroup(ids []int32) ([]int32, []int32, *dbus.Error) {
+	updated := make([]int32, 0, len(ids))
+	for _, id := range ids {
+		if id == 0 || slices.ContainsFunc(m.items(), func(item menuItem) bool { return item.ID == id }) {
+			updated = append(updated, id)
+		}
+	}
+	return updated, nil, nil
 }
 
 // 22x22 calendar icon in ARGB format (network byte order: ARGB)
@@ -428,4 +606,69 @@ var sniSignals = []introspect.Signal{
 	{Name: "NewIcon"},
 	{Name: "NewToolTip"},
 	{Name: "NewStatus", Args: []introspect.Arg{{Name: "status", Type: "s"}}},
+}
+
+var menuMethods = []introspect.Method{
+	{
+		Name: "GetLayout",
+		Args: []introspect.Arg{
+			{Name: "parentId", Type: "i", Direction: "in"},
+			{Name: "recursionDepth", Type: "i", Direction: "in"},
+			{Name: "propertyNames", Type: "as", Direction: "in"},
+			{Name: "revision", Type: "u", Direction: "out"},
+			{Name: "layout", Type: "(ia{sv}av)", Direction: "out"},
+		},
+	},
+	{
+		Name: "GetGroupProperties",
+		Args: []introspect.Arg{
+			{Name: "ids", Type: "ai", Direction: "in"},
+			{Name: "propertyNames", Type: "as", Direction: "in"},
+			{Name: "properties", Type: "a(ia{sv})", Direction: "out"},
+		},
+	},
+	{
+		Name: "GetProperty",
+		Args: []introspect.Arg{
+			{Name: "id", Type: "i", Direction: "in"},
+			{Name: "name", Type: "s", Direction: "in"},
+			{Name: "value", Type: "v", Direction: "out"},
+		},
+	},
+	{
+		Name: "Event",
+		Args: []introspect.Arg{
+			{Name: "id", Type: "i", Direction: "in"},
+			{Name: "eventId", Type: "s", Direction: "in"},
+			{Name: "data", Type: "v", Direction: "in"},
+			{Name: "timestamp", Type: "u", Direction: "in"},
+		},
+	},
+	{
+		Name: "EventGroup",
+		Args: []introspect.Arg{
+			{Name: "events", Type: "a(isvu)", Direction: "in"},
+			{Name: "idsNeedingRefresh", Type: "ai", Direction: "out"},
+			{Name: "idErrors", Type: "ai", Direction: "out"},
+		},
+	},
+	{
+		Name: "AboutToShow",
+		Args: []introspect.Arg{
+			{Name: "id", Type: "i", Direction: "in"},
+			{Name: "needUpdate", Type: "b", Direction: "out"},
+		},
+	},
+	{
+		Name: "AboutToShowGroup",
+		Args: []introspect.Arg{
+			{Name: "ids", Type: "ai", Direction: "in"},
+			{Name: "updatesNeeded", Type: "ai", Direction: "out"},
+			{Name: "idErrors", Type: "ai", Direction: "out"},
+		},
+	},
+}
+
+var menuSignals = []introspect.Signal{
+	{Name: "LayoutUpdated", Args: []introspect.Arg{{Name: "revision", Type: "u"}, {Name: "parent", Type: "i"}}},
 }

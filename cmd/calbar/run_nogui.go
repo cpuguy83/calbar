@@ -16,12 +16,15 @@ func (a *App) Run() error {
 		return fmt.Errorf("activation failed: %w", err)
 	}
 
-	// Wait for signal
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	<-sigCh
+	select {
+	case <-sigCh:
+		slog.Info("received signal, shutting down")
+		a.Quit()
+	case <-a.quitCh:
+	}
 
-	slog.Info("received signal, shutting down")
 	a.cleanup()
 	return nil
 }
