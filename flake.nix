@@ -29,6 +29,9 @@
             disable = false;
           },
         }:
+        let
+          gtkLibs = mkGtkLibFolder pkgs;
+        in
         pkgs.buildGoModule {
           pname = "calbar";
           version = "0.1.0";
@@ -40,6 +43,12 @@
 
           # Add nogtk build tag when GTK is disabled
           tags = pkgs.lib.optionals gtk.disable [ "nogtk" ];
+
+          # GTK-linked tests load libraries via purego in package init(), so the
+          # check environment needs the same unified library folder as runtime.
+          env = pkgs.lib.optionalAttrs (!gtk.disable) {
+            PUREGOTK_LIB_FOLDER = "${gtkLibs}/lib";
+          };
 
           meta = with pkgs.lib; {
             description = "Calendar system tray app for Linux";
