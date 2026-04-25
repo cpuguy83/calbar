@@ -495,6 +495,10 @@ func (p *Popup) Init() {
 				p.hideDetails()
 				return true
 			}
+			if p.stack != nil && p.stack.GetVisibleChildName() == "hidden" {
+				p.hideHiddenView()
+				return true
+			}
 			p.hideAll()
 			return true
 		}
@@ -1152,6 +1156,9 @@ func (p *Popup) Hide() {
 
 func (p *Popup) hideAll() {
 	p.window.SetVisible(false)
+	if p.stack != nil {
+		p.stack.SetVisibleChildName("list")
+	}
 	if p.dismissTimer != 0 {
 		glib.SourceRemove(p.dismissTimer)
 		p.dismissTimer = 0

@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	gosync "sync"
 	"time"
 
 	"github.com/cpuguy83/calbar/internal/calendar"
+	"github.com/cpuguy83/calbar/internal/clipboard"
 	"github.com/cpuguy83/calbar/internal/config"
 	"github.com/cpuguy83/calbar/internal/links"
 	"github.com/cpuguy83/calbar/internal/notify"
@@ -48,7 +50,11 @@ func main() {
 	var resolvedConfigPath string
 	var err error
 	if *configPath != "" {
-		resolvedConfigPath = config.ResolvePath(*configPath)
+		resolvedConfigPath, err = filepath.Abs(config.ResolvePath(*configPath))
+		if err != nil {
+			slog.Error("failed to resolve config path", "path", *configPath, "error", err)
+			os.Exit(1)
+		}
 		cfg, err = config.LoadFrom(*configPath)
 	} else {
 		resolvedConfigPath, err = config.DefaultPath()
@@ -227,9 +233,9 @@ func (a *App) activate() error {
 		slog.Debug("tray activated, toggling UI")
 		a.ui.Toggle()
 	})
-	a.tray.OnOpenConfig(func() {
-		if err := a.OpenConfig(); err != nil {
-			slog.Warn("failed to open config", "path", a.configPath, "error", err)
+	a.tray.OnCopyConfigPath(func() {
+		if err := a.CopyConfigPath(); err != nil {
+			slog.Warn("failed to copy config path", "path", a.configPath, "error", err)
 		}
 	})
 	a.tray.OnQuit(func() {
@@ -289,12 +295,12 @@ func (a *App) activate() error {
 	return nil
 }
 
-// OpenConfig opens the active config file in the desktop's default handler.
-func (a *App) OpenConfig() error {
+// CopyConfigPath copies the resolved config path to the clipboard.
+func (a *App) CopyConfigPath() error {
 	if a.configPath == "" {
 		return fmt.Errorf("config path is not set")
 	}
-	return links.OpenPath(a.configPath)
+	return clipboard.Copy(a.configPath)
 }
 
 // Quit requests application shutdown through the active runtime loop.

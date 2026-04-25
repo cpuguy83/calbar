@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cpuguy83/calbar/internal/calendar"
+	"github.com/cpuguy83/calbar/internal/clipboard"
 	"github.com/cpuguy83/calbar/internal/links"
 	"github.com/cpuguy83/calbar/internal/ui"
 )
@@ -400,35 +401,7 @@ func copyToClipboard(text string) {
 	for _, prefix := range []string{"📍 ", "👤 ", "📁 ", "🔗 "} {
 		clean = strings.TrimPrefix(clean, prefix)
 	}
-
-	// Try wl-copy first (Wayland)
-	if path, err := exec.LookPath("wl-copy"); err == nil && path != "" {
-		cmd := exec.Command("wl-copy", clean)
-		if err := cmd.Run(); err == nil {
-			slog.Debug("copied to clipboard via wl-copy", "text", clean)
-			return
-		}
+	if err := clipboard.Copy(clean); err != nil {
+		slog.Debug("no clipboard tool available", "text", clean, "error", err)
 	}
-
-	// Fall back to xclip (X11)
-	if path, err := exec.LookPath("xclip"); err == nil && path != "" {
-		cmd := exec.Command("xclip", "-selection", "clipboard")
-		cmd.Stdin = strings.NewReader(clean)
-		if err := cmd.Run(); err == nil {
-			slog.Debug("copied to clipboard via xclip", "text", clean)
-			return
-		}
-	}
-
-	// Fall back to xsel (X11)
-	if path, err := exec.LookPath("xsel"); err == nil && path != "" {
-		cmd := exec.Command("xsel", "--clipboard", "--input")
-		cmd.Stdin = strings.NewReader(clean)
-		if err := cmd.Run(); err == nil {
-			slog.Debug("copied to clipboard via xsel", "text", clean)
-			return
-		}
-	}
-
-	slog.Debug("no clipboard tool available", "text", clean)
 }

@@ -48,9 +48,9 @@ type Tray struct {
 	menu    dbusMenu
 
 	// Callbacks
-	onActivate   func() // Called when tray icon is clicked
-	onOpenConfig func()
-	onQuit       func()
+	onActivate       func() // Called when tray icon is clicked
+	onCopyConfigPath func()
+	onQuit           func()
 
 	// For clean shutdown of watcher goroutine
 	stopCh chan struct{}
@@ -264,9 +264,9 @@ func (t *Tray) OnActivate(fn func()) {
 	t.onActivate = fn
 }
 
-// OnOpenConfig sets the callback for the tray menu's Open Config action.
-func (t *Tray) OnOpenConfig(fn func()) {
-	t.onOpenConfig = fn
+// OnCopyConfigPath sets the callback for the tray menu's Copy Config Path action.
+func (t *Tray) OnCopyConfigPath(fn func()) {
+	t.onCopyConfigPath = fn
 }
 
 // OnQuit sets the callback for the tray menu's Exit action.
@@ -366,7 +366,7 @@ type dbusMenu struct {
 
 func (m *dbusMenu) items() []menuItem {
 	return []menuItem{
-		{ID: 1, Label: "Open Config", Activation: m.tray.onOpenConfig},
+		{ID: 1, Label: "Copy Config Path", Activation: m.tray.onCopyConfigPath},
 		{ID: 2, Label: "Exit", Activation: m.tray.onQuit},
 	}
 }
