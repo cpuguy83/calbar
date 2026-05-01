@@ -212,6 +212,24 @@ The GTK popup supports user CSS overrides.
 ./calbar --config ~/.config/calbar/config.yaml -v
 ```
 
+When CalBar is already running, subcommands control the active instance over D-Bus:
+
+```bash
+calbar show
+calbar hide
+calbar toggle
+calbar search
+calbar sync
+calbar quit
+```
+
+Example Hyprland binds:
+
+```ini
+bind = SUPER, C, exec, calbar toggle
+bind = SUPER SHIFT, C, exec, calbar search
+```
+
 ### Using systemd (recommended)
 
 ```bash

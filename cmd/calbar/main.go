@@ -5,6 +5,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -31,42 +32,89 @@ type hiddenEntry struct {
 }
 
 func main() {
-	var (
-		configPath = flag.String("config", "", "path to config file (default: ~/.config/calbar/config.yaml)")
-		verbose    = flag.Bool("v", false, "verbose logging")
-	)
-	flag.Parse()
-
-	// Setup logging
-	level := slog.LevelInfo
-	if *verbose {
-		level = slog.LevelDebug
+	cli, err := parseCLI(os.Args[1:])
+	if err != nil {
+		setupLogging(false)
+		slog.Error("invalid arguments", "error", err)
+		os.Exit(2)
 	}
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
-	slog.SetDefault(logger)
+	setupLogging(cli.verbose)
 
+	if cli.command != "" {
+		if err := runControlCommand(cli.command, cli.commandArgs); err != nil {
+			slog.Error("command failed", "command", cli.command, "error", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	if err := runDaemon(cli.configPath); err != nil {
+		slog.Error("app failed", "error", err)
+		os.Exit(1)
+	}
+}
+
+type cliOptions struct {
+	configPath  string
+	verbose     bool
+	command     string
+	commandArgs []string
+}
+
+func parseCLI(args []string) (cliOptions, error) {
+	fs := flag.NewFlagSet("calbar", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	configPath := fs.String("config", "", "path to config file (default: ~/.config/calbar/config.yaml)")
+	verbose := fs.Bool("v", false, "verbose logging")
+	if err := fs.Parse(args); err != nil {
+		return cliOptions{}, err
+	}
+
+	cli := cliOptions{configPath: *configPath, verbose: *verbose}
+	remaining := fs.Args()
+	if len(remaining) == 0 {
+		return cli, nil
+	}
+	cli.command = remaining[0]
+	cli.commandArgs = remaining[1:]
+	if _, ok := controlCommandMethods[cli.command]; !ok {
+		return cliOptions{}, fmt.Errorf("unknown command %q", cli.command)
+	}
+	return cli, nil
+}
+
+func runControlCommand(command string, args []string) error {
+	fs := flag.NewFlagSet("calbar "+command, flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("%s takes no arguments", command)
+	}
+	return sendControlCommand(command)
+}
+
+func runDaemon(configPath string) error {
 	// Load configuration
 	var cfg *config.Config
 	var resolvedConfigPath string
 	var err error
-	if *configPath != "" {
-		resolvedConfigPath, err = filepath.Abs(config.ResolvePath(*configPath))
+	if configPath != "" {
+		resolvedConfigPath, err = filepath.Abs(config.ResolvePath(configPath))
 		if err != nil {
-			slog.Error("failed to resolve config path", "path", *configPath, "error", err)
-			os.Exit(1)
+			return fmt.Errorf("resolve config path %q: %w", configPath, err)
 		}
-		cfg, err = config.LoadFrom(*configPath)
+		cfg, err = config.LoadFrom(configPath)
 	} else {
 		resolvedConfigPath, err = config.DefaultPath()
 		if err != nil {
-			slog.Error("failed to resolve config path", "error", err)
-			os.Exit(1)
+			return fmt.Errorf("resolve default config path: %w", err)
 		}
 		cfg, err = config.Load()
 	}
 	if err != nil {
-		slog.Error("failed to load config", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("load config: %w", err)
 	}
 
 	slog.Info("starting calbar",
@@ -84,10 +132,16 @@ func main() {
 		notificationIDs: make(map[uint32]string),
 	}
 
-	if err := app.Run(); err != nil {
-		slog.Error("app failed", "error", err)
-		os.Exit(1)
+	return app.Run()
+}
+
+func setupLogging(verbose bool) {
+	level := slog.LevelInfo
+	if verbose {
+		level = slog.LevelDebug
 	}
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
+	slog.SetDefault(logger)
 }
 
 // App is the main calbar application.
@@ -98,6 +152,7 @@ type App struct {
 	ui         ui.UI
 	notifier   *notify.Notifier
 	syncer     *sync.Syncer
+	control    *controlServer
 
 	mu            gosync.RWMutex
 	events        []calendar.Event
@@ -205,6 +260,11 @@ func (a *App) activate() error {
 	// Initialize UI
 	if err := a.ui.Init(); err != nil {
 		return fmt.Errorf("init UI: %w", err)
+	}
+
+	a.control, err = startControlServer(a)
+	if err != nil {
+		return fmt.Errorf("start control server: %w", err)
 	}
 
 	// Set up action handler
@@ -326,6 +386,9 @@ func (a *App) cleanup() {
 	}
 	if a.notifier != nil {
 		a.notifier.Close()
+	}
+	if a.control != nil {
+		a.control.Close()
 	}
 }
 

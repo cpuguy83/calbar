@@ -21,6 +21,9 @@ type UI interface {
 	// Toggle shows or hides the UI.
 	Toggle()
 
+	// Search displays the UI and focuses search when the backend supports it.
+	Search()
+
 	// SetEvents updates the event list.
 	SetEvents(events []calendar.Event)
 

@@ -109,6 +109,11 @@ func (m *Menu) Toggle() {
 	// Can't programmatically close dmenu, so Toggle just shows
 }
 
+// Search displays the configured menu backend. Search is handled by the menu program.
+func (m *Menu) Search() {
+	m.Show()
+}
+
 // SetEvents updates the event list.
 func (m *Menu) SetEvents(events []calendar.Event) {
 	m.mu.Lock()

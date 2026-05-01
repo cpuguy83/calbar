@@ -105,6 +105,7 @@ type Popup struct {
 	updateHiddenViewCb     stableCallback[glib.SourceFunc]
 	updateStatusCb         stableCallback[glib.SourceFunc]
 	showCb                 stableCallback[glib.SourceFunc]
+	searchShowCb           stableCallback[glib.SourceFunc]
 	hideCb                 stableCallback[glib.SourceFunc]
 	toggleCb               stableCallback[glib.SourceFunc]
 	dismissTimerCb         stableCallback[glib.SourceFunc]
@@ -398,6 +399,23 @@ func (p *Popup) getShowCb() *glib.SourceFunc {
 			p.updateList()
 			p.window.SetVisible(true)
 			p.window.Present()
+			return false
+		}
+	})
+}
+
+func (p *Popup) getSearchShowCb() *glib.SourceFunc {
+	return p.searchShowCb.get(func() glib.SourceFunc {
+		return func(data uintptr) bool {
+			if p.stack != nil {
+				p.stack.SetVisibleChildName("list")
+			}
+			p.detailsEvent = nil
+			p.detailsFromHidden = false
+			p.updateList()
+			p.window.SetVisible(true)
+			p.window.Present()
+			p.showSearch()
 			return false
 		}
 	})
@@ -1303,6 +1321,14 @@ func (p *Popup) Show() {
 		return
 	}
 	glib.IdleAdd(p.getShowCb(), 0)
+}
+
+// Search shows the popup window and focuses the search field.
+func (p *Popup) Search() {
+	if p.window == nil {
+		return
+	}
+	glib.IdleAdd(p.getSearchShowCb(), 0)
 }
 
 // Hide hides the popup window.

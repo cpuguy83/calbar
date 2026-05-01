@@ -63,6 +63,11 @@ func (g *GTK) Toggle() {
 	g.popup.Toggle()
 }
 
+// Search displays the popup and focuses search.
+func (g *GTK) Search() {
+	g.popup.Search()
+}
+
 // SetEvents updates the event list.
 func (g *GTK) SetEvents(events []calendar.Event) {
 	g.popup.SetEvents(events)

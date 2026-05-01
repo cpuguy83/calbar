@@ -8,6 +8,64 @@ import (
 	"github.com/cpuguy83/calbar/internal/config"
 )
 
+func TestParseCLI(t *testing.T) {
+	tests := []struct {
+		name        string
+		args        []string
+		wantConfig  string
+		wantVerbose bool
+		wantCommand string
+		wantArgs    []string
+		wantErr     bool
+	}{
+		{name: "daemon", args: nil},
+		{name: "daemon flags", args: []string{"--config", "test.yaml", "-v"}, wantConfig: "test.yaml", wantVerbose: true},
+		{name: "command", args: []string{"show"}, wantCommand: "show"},
+		{name: "global flags before command", args: []string{"--config", "test.yaml", "toggle"}, wantConfig: "test.yaml", wantCommand: "toggle"},
+		{name: "command args preserved", args: []string{"search", "-v"}, wantCommand: "search", wantArgs: []string{"-v"}},
+		{name: "unknown command", args: []string{"wat"}, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseCLI(tt.args)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got.configPath != tt.wantConfig {
+				t.Fatalf("config path got %q, want %q", got.configPath, tt.wantConfig)
+			}
+			if got.verbose != tt.wantVerbose {
+				t.Fatalf("verbose got %v, want %v", got.verbose, tt.wantVerbose)
+			}
+			if got.command != tt.wantCommand {
+				t.Fatalf("command got %q, want %q", got.command, tt.wantCommand)
+			}
+			if len(got.commandArgs) != len(tt.wantArgs) {
+				t.Fatalf("command args got %v, want %v", got.commandArgs, tt.wantArgs)
+			}
+			for i := range got.commandArgs {
+				if got.commandArgs[i] != tt.wantArgs[i] {
+					t.Fatalf("command args got %v, want %v", got.commandArgs, tt.wantArgs)
+				}
+			}
+		})
+	}
+}
+
+func TestRunControlCommandRejectsArgs(t *testing.T) {
+	err := runControlCommand("show", []string{"extra"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
 func TestNotificationTriggers_UsesEventRemindersByDefault(t *testing.T) {
 	start := time.Now().Add(2 * time.Hour).Truncate(time.Second)
 	trigger := start.Add(-15 * time.Minute)

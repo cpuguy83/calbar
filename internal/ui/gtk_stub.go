@@ -33,6 +33,9 @@ func (g *GTK) Hide() {}
 // Toggle is a no-op stub.
 func (g *GTK) Toggle() {}
 
+// Search is a no-op stub.
+func (g *GTK) Search() {}
+
 // SetEvents is a no-op stub.
 func (g *GTK) SetEvents(events []calendar.Event) {}
 
