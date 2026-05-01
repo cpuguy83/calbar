@@ -53,6 +53,9 @@ type Popup struct {
 	hiddenCount   *gtk.Label
 	syncButton    *gtk.Button
 	syncIndicator *gtk.Box
+	searchButton  *gtk.Button
+	searchBox     *gtk.Box
+	searchEntry   *gtk.SearchEntry
 
 	// Details panel
 	stack             *gtk.Stack
@@ -70,6 +73,7 @@ type Popup struct {
 	stale              bool
 	lastSync           time.Time
 	loading            bool
+	searchQuery        string
 	pointerInside      bool
 	hoverDismissDelay  time.Duration
 	notificationBefore []time.Duration
@@ -91,6 +95,10 @@ type Popup struct {
 	hideClickCb            stableCallback[func(gtk.Button)]
 	unhideClickCb          stableCallback[func(gtk.Button)]
 	syncClickCb            stableCallback[func(gtk.Button)]
+	searchClickCb          stableCallback[func(gtk.Button)]
+	searchCloseClickCb     stableCallback[func(gtk.Button)]
+	searchChangedCb        stableCallback[func(gtk.SearchEntry)]
+	searchStopCb           stableCallback[func(gtk.SearchEntry)]
 	backBtnClickCb         stableCallback[func(gtk.Button)]
 	hiddenBackBtnClickCb   stableCallback[func(gtk.Button)]
 	updateListCb           stableCallback[glib.SourceFunc]
@@ -293,6 +301,45 @@ func (p *Popup) getSyncClickCb() *func(gtk.Button) {
 	})
 }
 
+func (p *Popup) getSearchClickCb() *func(gtk.Button) {
+	return p.searchClickCb.get(func() func(gtk.Button) {
+		return func(btn gtk.Button) {
+			p.showSearch()
+		}
+	})
+}
+
+func (p *Popup) getSearchCloseClickCb() *func(gtk.Button) {
+	return p.searchCloseClickCb.get(func() func(gtk.Button) {
+		return func(btn gtk.Button) {
+			p.hideSearch()
+		}
+	})
+}
+
+func (p *Popup) getSearchChangedCb() *func(gtk.SearchEntry) {
+	return p.searchChangedCb.get(func() func(gtk.SearchEntry) {
+		return func(entry gtk.SearchEntry) {
+			query := strings.TrimSpace(entry.GetText())
+			p.mu.Lock()
+			changed := p.searchQuery != query
+			p.searchQuery = query
+			p.mu.Unlock()
+			if changed {
+				p.updateList()
+			}
+		}
+	})
+}
+
+func (p *Popup) getSearchStopCb() *func(gtk.SearchEntry) {
+	return p.searchStopCb.get(func() func(gtk.SearchEntry) {
+		return func(entry gtk.SearchEntry) {
+			p.hideSearch()
+		}
+	})
+}
+
 func (p *Popup) getHiddenBackBtnClickCb() *func(gtk.Button) {
 	return p.hiddenBackBtnClickCb.get(func() func(gtk.Button) {
 		return func(btn gtk.Button) {
@@ -489,7 +536,20 @@ func (p *Popup) Init() {
 	// Escape to close (or go back from details)
 	keyController := gtk.NewEventControllerKey()
 	keyPressedCb := func(ctrl gtk.EventControllerKey, keyval, keycode uint, state gdk.ModifierType) bool {
+		if keyval == uint(gdk.KEY_f) || keyval == uint(gdk.KEY_F) {
+			if state&gdk.ControlMaskValue != 0 || state&gdk.MetaMaskValue != 0 || state&gdk.SuperMaskValue != 0 {
+				if p.stack != nil && p.stack.GetVisibleChildName() != "list" {
+					p.stack.SetVisibleChildName("list")
+				}
+				p.showSearch()
+				return true
+			}
+		}
 		if keyval == uint(gdk.KEY_Escape) {
+			if p.stack != nil && p.stack.GetVisibleChildName() == "list" && p.searchBox != nil && p.searchBox.GetVisible() {
+				p.hideSearch()
+				return true
+			}
 			// If showing details, go back to list
 			if p.stack != nil && p.stack.GetVisibleChildName() == "details" {
 				p.hideDetails()
@@ -584,6 +644,10 @@ func (p *Popup) buildUI() {
 	header := p.buildHeader()
 	p.listView.Append(&header.Widget)
 
+	// Search row
+	searchBox := p.buildSearchBox()
+	p.listView.Append(&searchBox.Widget)
+
 	// Scrolled event list
 	scrolled := gtk.NewScrolledWindow()
 	scrolled.SetVexpand(true)
@@ -646,9 +710,21 @@ func (p *Popup) buildHeader() *gtk.Box {
 	// Title
 	title := gtk.NewLabel("Upcoming Events")
 	title.AddCssClass("header-title")
-	title.SetHexpand(true)
 	title.SetXalign(0)
 	header.Append(&title.Widget)
+
+	p.searchButton = gtk.NewButton()
+	p.searchButton.AddCssClass("search-button")
+	p.searchButton.SetTooltipText("Search events")
+	searchIcon := gtk.NewImageFromIconName("edit-find-symbolic")
+	searchIcon.SetPixelSize(16)
+	setOwnedChild(p.searchButton, &searchIcon.Widget, searchIcon)
+	p.searchButton.ConnectClicked(p.getSearchClickCb())
+	header.Append(&p.searchButton.Widget)
+
+	spacer := gtk.NewBox(gtk.OrientationHorizontalValue, 0)
+	spacer.SetHexpand(true)
+	header.Append(&spacer.Widget)
 
 	// Manual sync button
 	p.syncIndicator = gtk.NewBox(gtk.OrientationHorizontalValue, 0)
@@ -666,6 +742,67 @@ func (p *Popup) buildHeader() *gtk.Box {
 	header.Append(&p.syncButton.Widget)
 
 	return header
+}
+
+// buildSearchBox creates the expandable search row below the header.
+func (p *Popup) buildSearchBox() *gtk.Box {
+	p.searchBox = gtk.NewBox(gtk.OrientationHorizontalValue, 8)
+	p.searchBox.AddCssClass("search-box")
+	p.searchBox.SetVisible(false)
+
+	p.searchEntry = gtk.NewSearchEntry()
+	p.searchEntry.SetPlaceholderText("Search events...")
+	p.searchEntry.SetSearchDelay(120)
+	p.searchEntry.SetHexpand(true)
+	p.searchEntry.SetValign(gtk.AlignCenterValue)
+	p.searchEntry.ConnectSearchChanged(p.getSearchChangedCb())
+	p.searchEntry.ConnectStopSearch(p.getSearchStopCb())
+	p.searchBox.Append(&p.searchEntry.Widget)
+
+	closeButton := gtk.NewButton()
+	closeButton.AddCssClass("search-close-button")
+	closeButton.SetTooltipText("Close search")
+	closeButton.SetValign(gtk.AlignCenterValue)
+	closeIcon := gtk.NewImageFromIconName("window-close-symbolic")
+	closeIcon.SetPixelSize(16)
+	setOwnedChild(closeButton, &closeIcon.Widget, closeIcon)
+	closeButton.ConnectClicked(p.getSearchCloseClickCb())
+	p.searchBox.Append(&closeButton.Widget)
+
+	return p.searchBox
+}
+
+func (p *Popup) showSearch() {
+	if p.searchBox == nil {
+		return
+	}
+	p.searchBox.SetVisible(true)
+	if p.searchEntry != nil {
+		p.searchEntry.GrabFocus()
+	}
+	if p.searchButton != nil {
+		p.searchButton.SetSensitive(false)
+	}
+}
+
+func (p *Popup) hideSearch() {
+	if p.searchBox == nil {
+		return
+	}
+	p.searchBox.SetVisible(false)
+	if p.searchEntry != nil {
+		p.searchEntry.SetText("")
+	}
+	p.mu.Lock()
+	changed := p.searchQuery != ""
+	p.searchQuery = ""
+	p.mu.Unlock()
+	if p.searchButton != nil {
+		p.searchButton.SetSensitive(true)
+	}
+	if changed {
+		p.updateList()
+	}
 }
 
 // applyCSS applies custom styling with libadwaita color variables.
@@ -707,6 +844,28 @@ func (p *Popup) applyCSS() {
 		.sync-button {
 			min-width: 32px;
 			min-height: 32px;
+			padding: 0;
+		}
+
+		.search-button {
+			min-width: 32px;
+			min-height: 32px;
+			padding: 0;
+			margin-left: 8px;
+		}
+
+		.search-box {
+			padding: 6px 16px 8px 16px;
+			border-bottom: 1px solid alpha(@borders, 0.3);
+		}
+
+		.search-box entry {
+			min-height: 28px;
+		}
+
+		.search-close-button {
+			min-width: 28px;
+			min-height: 28px;
 			padding: 0;
 		}
 
@@ -1268,6 +1427,7 @@ func (p *Popup) updateList() {
 	timeRange := p.timeRange
 	eventEndGrace := p.eventEndGrace
 	loading := p.loading
+	searchQuery := strings.ToLower(strings.TrimSpace(p.searchQuery))
 	p.mu.RUnlock()
 
 	if loading && len(events) == 0 {
@@ -1287,6 +1447,10 @@ func (p *Popup) updateList() {
 	var allDayEvents []calendar.Event
 
 	for _, e := range events {
+		if searchQuery != "" && !eventMatchesSearch(e, searchQuery) {
+			continue
+		}
+
 		// Keep events visible for a grace period after they end
 		if e.End.Add(eventEndGrace).Before(now) {
 			continue
@@ -1324,7 +1488,11 @@ func (p *Popup) updateList() {
 	})
 
 	if len(timedEvents) == 0 && len(allDayEvents) == 0 {
-		p.showEmptyState()
+		if searchQuery != "" {
+			p.showNoSearchResultsState()
+		} else {
+			p.showEmptyState()
+		}
 	} else {
 		if len(timedEvents) > 0 {
 			p.populateTimedEvents(timedEvents, now)
@@ -1387,6 +1555,30 @@ func (p *Popup) showEmptyState() {
 	appendOwned(p.listBox, &box.Widget, box)
 }
 
+// showNoSearchResultsState displays the empty state for an active search.
+func (p *Popup) showNoSearchResultsState() {
+	box := gtk.NewBox(gtk.OrientationVerticalValue, 0)
+	box.AddCssClass("empty-state")
+	box.SetHalign(gtk.AlignCenterValue)
+	box.SetValign(gtk.AlignCenterValue)
+	box.SetVexpand(true)
+
+	icon := gtk.NewImageFromIconName("edit-find-symbolic")
+	icon.AddCssClass("empty-icon")
+	icon.SetPixelSize(48)
+	appendOwned(box, &icon.Widget, icon)
+
+	title := gtk.NewLabel("No Matching Events")
+	title.AddCssClass("empty-title")
+	appendOwned(box, &title.Widget, title)
+
+	subtitle := gtk.NewLabel("Try a different search")
+	subtitle.AddCssClass("empty-subtitle")
+	appendOwned(box, &subtitle.Widget, subtitle)
+
+	appendOwned(p.listBox, &box.Widget, box)
+}
+
 // showNoTimedEventsState displays a minimal state when only all-day events exist.
 func (p *Popup) showNoTimedEventsState() {
 	box := gtk.NewBox(gtk.OrientationVerticalValue, 0)
@@ -1405,6 +1597,28 @@ func (p *Popup) showNoTimedEventsState() {
 	appendOwned(box, &subtitle.Widget, subtitle)
 
 	appendOwned(p.listBox, &box.Widget, box)
+}
+
+func eventMatchesSearch(event calendar.Event, query string) bool {
+	if query == "" {
+		return true
+	}
+
+	fields := [...]string{
+		event.Summary,
+		event.Description,
+		event.Location,
+		event.Organizer,
+		event.Source,
+		event.URL,
+	}
+	for _, field := range fields {
+		if strings.Contains(strings.ToLower(field), query) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // populateTimedEvents adds timed event rows grouped by day.
