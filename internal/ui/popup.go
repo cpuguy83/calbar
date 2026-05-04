@@ -893,7 +893,7 @@ func (p *Popup) applyCSS() {
 			margin-right: 6px;
 			margin-top: 12px;
 			margin-bottom: 12px;
-			border-radius: 999px;
+			border-radius: 10px;
 			background: @accent_color;
 		}
 
@@ -975,20 +975,36 @@ func (p *Popup) applyCSS() {
 		}
 
 		/* Join button */
-		.join-btn {
-			min-height: 28px;
-			min-width: 28px;
-			padding: 0 12px;
-			border-radius: 8px;
-			font-size: 12px;
+		button.join-btn {
+			min-height: 24px;
+			min-width: 0;
+			padding: 0 8px;
+			border-radius: 10px;
+			font-size: 11px;
 			font-weight: 500;
 			margin-left: 8px;
 			background: @accent_bg_color;
+			background-color: @accent_bg_color;
+			background-image: none;
 			color: @accent_fg_color;
+			border: none;
+			box-shadow: none;
+			outline: none;
 		}
 
-		.join-btn:hover {
-			filter: brightness(1.1);
+		button.join-btn:hover {
+			background: shade(@accent_bg_color, 1.08);
+			background-color: shade(@accent_bg_color, 1.08);
+			background-image: none;
+			box-shadow: none;
+		}
+
+		button.join-btn image,
+		button.join-btn label {
+			background: transparent;
+			background-color: transparent;
+			background-image: none;
+			color: inherit;
 		}
 
 		/* Status bar */
@@ -1167,6 +1183,9 @@ func (p *Popup) applyCSS() {
 
 		.details-join-btn {
 			min-width: 120px;
+			min-height: 32px;
+			padding: 0 16px;
+			font-size: 12px;
 		}
 
 		/* Hide/Unhide button */
@@ -1996,6 +2015,7 @@ func (p *Popup) createJoinButton(meetingLink string, lookupPtrs *[]uintptr) *gtk
 
 	btn := gtk.NewButton()
 	btn.AddCssClass("join-btn")
+	btn.SetValign(gtk.AlignCenterValue)
 
 	// Use icon + label for known services
 	box := gtk.NewBox(gtk.OrientationHorizontalValue, 4)
