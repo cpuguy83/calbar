@@ -5,6 +5,7 @@ package ui
 
 import (
 	"fmt"
+	"html"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -33,6 +34,8 @@ type stableCallback[T any] struct {
 	once sync.Once
 	fn   T
 }
+
+var htmlLineEndingReplacer = strings.NewReplacer("\r\n", "\n", "\r", "\n")
 
 // get returns a pointer to the callback function, initializing it on first call.
 func (s *stableCallback[T]) get(init func() T) *T {
@@ -2462,28 +2465,26 @@ func (p *Popup) addDetailRow(container *gtk.Box, icon string, text string) {
 
 // stripHTML removes HTML tags and converts to readable plain text.
 func stripHTML(s string) string {
-	s = strings.ReplaceAll(s, "\r\n", "\n")
-	s = strings.ReplaceAll(s, "\r", "\n")
+	s = htmlLineEndingReplacer.Replace(s)
+	if !strings.Contains(s, "<") {
+		return cleanDecodedHTMLText(s)
+	}
 
-	var result []byte
-	inTag := false
-	tagName := ""
+	var result strings.Builder
+	result.Grow(len(s))
 	lastWasSpace := false
+	trailingNewlines := 0
 
 	// Helper to add newline(s)
 	addNewline := func(count int) {
 		// Don't add newlines at the start
-		if len(result) == 0 {
+		if result.Len() == 0 {
 			return
 		}
-		// Count existing trailing newlines
-		existing := 0
-		for i := len(result) - 1; i >= 0 && result[i] == '\n'; i-- {
-			existing++
-		}
 		// Add only what's needed up to count
-		for i := existing; i < count; i++ {
-			result = append(result, '\n')
+		for trailingNewlines < count {
+			result.WriteByte('\n')
+			trailingNewlines++
 		}
 		lastWasSpace = true
 	}
@@ -2492,109 +2493,20 @@ func stripHTML(s string) string {
 		c := s[i]
 
 		if c == '<' {
-			inTag = true
-			tagName = ""
-			continue
-		}
-
-		if inTag {
-			if c == '>' {
-				inTag = false
-				// Process tag for formatting
-				tagLower := strings.ToLower(tagName)
-				// Remove leading slash for closing tags
-				isClosing := strings.HasPrefix(tagLower, "/")
-				if isClosing {
-					tagLower = tagLower[1:]
-				}
-				// Extract just the tag name (before any attributes)
-				if spaceIdx := strings.IndexAny(tagLower, " \t\n"); spaceIdx > 0 {
-					tagLower = tagLower[:spaceIdx]
-				}
-
-				switch tagLower {
-				case "br":
-					addNewline(1)
-				case "p", "div", "h1", "h2", "h3", "h4", "h5", "h6":
-					if isClosing {
-						addNewline(2)
-					}
-				case "li":
-					if !isClosing {
-						addNewline(1)
-						result = append(result, []byte("• ")...)
-						lastWasSpace = true
-					}
-				case "tr":
-					if isClosing {
-						addNewline(1)
-					}
-				case "ul", "ol":
-					if isClosing {
-						addNewline(1)
-					}
-				}
+			end := strings.IndexByte(s[i+1:], '>')
+			if end == -1 {
+				result.WriteByte(c)
+				lastWasSpace = false
+				trailingNewlines = 0
 				continue
 			}
-			tagName += string(c)
+			processHTMLTag(s[i+1:i+1+end], addNewline, func(text string) {
+				result.WriteString(text)
+				lastWasSpace = strings.HasSuffix(text, " ")
+				trailingNewlines = 0
+			})
+			i += end + 1
 			continue
-		}
-
-		// Handle HTML entities
-		if c == '&' {
-			entity := ""
-			for j := i + 1; j < len(s) && j < i+10; j++ {
-				if s[j] == ';' {
-					entity = s[i+1 : j]
-					i = j
-					break
-				}
-				if s[j] == ' ' || s[j] == '<' {
-					break
-				}
-			}
-			if entity != "" {
-				var replacement byte
-				switch entity {
-				case "nbsp":
-					replacement = ' '
-				case "amp":
-					replacement = '&'
-				case "lt":
-					replacement = '<'
-				case "gt":
-					replacement = '>'
-				case "quot":
-					replacement = '"'
-				case "#39", "apos":
-					replacement = '\''
-				case "#8217": // right single quote
-					replacement = '\''
-				case "#8216": // left single quote
-					replacement = '\''
-				case "#8220", "#8221": // double quotes
-					replacement = '"'
-				case "#8211": // en-dash
-					replacement = '-'
-				case "#8212": // em-dash
-					replacement = '-'
-				case "#160": // non-breaking space
-					replacement = ' '
-				default:
-					// Skip unknown entities
-					continue
-				}
-				if replacement == ' ' {
-					if !lastWasSpace {
-						result = append(result, replacement)
-						lastWasSpace = true
-					}
-				} else {
-					result = append(result, replacement)
-					lastWasSpace = false
-				}
-				continue
-			}
 		}
 
 		// Handle whitespace
@@ -2604,17 +2516,64 @@ func stripHTML(s string) string {
 		}
 		if c == '\t' || c == ' ' {
 			if !lastWasSpace {
-				result = append(result, ' ')
+				result.WriteByte(' ')
 				lastWasSpace = true
+				trailingNewlines = 0
 			}
 			continue
 		}
 
 		// Regular character
-		result = append(result, c)
+		result.WriteByte(c)
 		lastWasSpace = false
+		trailingNewlines = 0
 	}
 
 	// Trim leading/trailing whitespace
-	return strings.TrimSpace(string(result))
+	return cleanDecodedHTMLText(result.String())
+}
+
+func cleanDecodedHTMLText(s string) string {
+	s = html.UnescapeString(s)
+	s = strings.ReplaceAll(s, "\u00a0", " ")
+	return strings.TrimSpace(s)
+}
+
+func processHTMLTag(tag string, addNewline func(int), writeText func(string)) {
+	tag = strings.TrimSpace(tag)
+	if tag == "" || strings.HasPrefix(tag, "!") || strings.HasPrefix(tag, "?") {
+		return
+	}
+
+	isClosing := strings.HasPrefix(tag, "/")
+	if isClosing {
+		tag = strings.TrimSpace(tag[1:])
+	}
+
+	if idx := strings.IndexAny(tag, " \t\n/"); idx >= 0 {
+		tag = tag[:idx]
+	}
+	tag = strings.ToLower(tag)
+
+	switch tag {
+	case "br":
+		addNewline(1)
+	case "p", "div", "h1", "h2", "h3", "h4", "h5", "h6":
+		if isClosing {
+			addNewline(2)
+		}
+	case "li":
+		if !isClosing {
+			addNewline(1)
+			writeText("• ")
+		}
+	case "tr":
+		if isClosing {
+			addNewline(1)
+		}
+	case "ul", "ol":
+		if isClosing {
+			addNewline(1)
+		}
+	}
 }
