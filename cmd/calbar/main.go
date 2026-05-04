@@ -34,20 +34,36 @@ type hiddenEntry struct {
 func main() {
 	cli, err := parseCLI(os.Args[1:])
 	if err != nil {
-		setupLogging(false)
-		slog.Error("invalid arguments", "error", err)
+		fmt.Fprintf(os.Stderr, "calbar: %v\n\n", err)
+		printBaseUsage(os.Stderr)
 		os.Exit(2)
 	}
-	setupLogging(cli.verbose)
+	if cli.help {
+		printUsage(os.Stdout, cli.helpCommand)
+		return
+	}
 
 	if cli.command != "" {
-		if err := runControlCommand(cli.command, cli.commandArgs); err != nil {
+		help, err := parseControlCommand(cli.command, cli.commandArgs)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "calbar %s: %v\n\n", cli.command, err)
+			printCommandUsage(os.Stderr, cli.command)
+			os.Exit(2)
+		}
+		if help {
+			printCommandUsage(os.Stdout, cli.command)
+			return
+		}
+
+		setupLogging(cli.verbose)
+		if err := sendControlCommand(cli.command); err != nil {
 			slog.Error("command failed", "command", cli.command, "error", err)
 			os.Exit(1)
 		}
 		return
 	}
 
+	setupLogging(cli.verbose)
 	if err := runDaemon(cli.configPath); err != nil {
 		slog.Error("app failed", "error", err)
 		os.Exit(1)
@@ -57,6 +73,8 @@ func main() {
 type cliOptions struct {
 	configPath  string
 	verbose     bool
+	help        bool
+	helpCommand string
 	command     string
 	commandArgs []string
 }
@@ -64,15 +82,30 @@ type cliOptions struct {
 func parseCLI(args []string) (cliOptions, error) {
 	fs := flag.NewFlagSet("calbar", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	configPath := fs.String("config", "", "path to config file (default: ~/.config/calbar/config.yaml)")
-	verbose := fs.Bool("v", false, "verbose logging")
+	configPath, verbose, help := addBaseFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return cliOptions{}, err
 	}
 
-	cli := cliOptions{configPath: *configPath, verbose: *verbose}
+	cli := cliOptions{configPath: *configPath, verbose: *verbose, help: *help}
 	remaining := fs.Args()
+	if cli.help {
+		return cli, nil
+	}
 	if len(remaining) == 0 {
+		return cli, nil
+	}
+	if remaining[0] == "help" {
+		cli.help = true
+		if len(remaining) > 2 {
+			return cliOptions{}, fmt.Errorf("help takes at most one command")
+		}
+		if len(remaining) == 2 {
+			if _, ok := controlCommandMethods[remaining[1]]; !ok {
+				return cliOptions{}, fmt.Errorf("unknown command %q", remaining[1])
+			}
+			cli.helpCommand = remaining[1]
+		}
 		return cli, nil
 	}
 	cli.command = remaining[0]
@@ -83,16 +116,79 @@ func parseCLI(args []string) (cliOptions, error) {
 	return cli, nil
 }
 
-func runControlCommand(command string, args []string) error {
+func parseControlCommand(command string, args []string) (bool, error) {
 	fs := flag.NewFlagSet("calbar "+command, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
+	help := addHelpFlags(fs)
 	if err := fs.Parse(args); err != nil {
-		return err
+		return false, err
+	}
+	if *help {
+		return true, nil
 	}
 	if fs.NArg() != 0 {
-		return fmt.Errorf("%s takes no arguments", command)
+		return false, fmt.Errorf("%s takes no arguments", command)
 	}
-	return sendControlCommand(command)
+	return false, nil
+}
+
+func addBaseFlags(fs *flag.FlagSet) (*string, *bool, *bool) {
+	configPath := fs.String("config", "", "path to config file (default: ~/.config/calbar/config.yaml)")
+	verbose := fs.Bool("v", false, "verbose logging")
+	help := addHelpFlags(fs)
+	return configPath, verbose, help
+}
+
+func addHelpFlags(fs *flag.FlagSet) *bool {
+	help := fs.Bool("help", false, "show help")
+	fs.BoolFunc("h", "show help", func(string) error {
+		*help = true
+		return nil
+	})
+	return help
+}
+
+func printUsage(w io.Writer, command string) {
+	if command != "" {
+		printCommandUsage(w, command)
+		return
+	}
+	printBaseUsage(w)
+}
+
+func printBaseUsage(w io.Writer) {
+	fmt.Fprintln(w, "CalBar displays upcoming calendar events in a tray popup or menu launcher.")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Usage:")
+	fmt.Fprintln(w, "  calbar [options]")
+	fmt.Fprintln(w, "  calbar [options] <command> [command options]")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Commands:")
+	for _, name := range controlCommandNames {
+		fmt.Fprintf(w, "  %-8s %s\n", name, controlCommandDescriptions[name])
+	}
+	fmt.Fprintln(w, "  help     Show help for calbar or a command")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Options:")
+	fmt.Fprintln(w, "  -config string")
+	fmt.Fprintln(w, "        path to config file (default: ~/.config/calbar/config.yaml)")
+	fmt.Fprintln(w, "  -v")
+	fmt.Fprintln(w, "        verbose logging")
+	fmt.Fprintln(w, "  -h, -help")
+	fmt.Fprintln(w, "        show help")
+}
+
+func printCommandUsage(w io.Writer, command string) {
+	desc := controlCommandDescriptions[command]
+	if desc == "" {
+		desc = "Control the active CalBar instance"
+	}
+	fmt.Fprintf(w, "Usage:\n  calbar %s [options]\n\n", command)
+	fmt.Fprintln(w, desc+".")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Options:")
+	fmt.Fprintln(w, "  -h, -help")
+	fmt.Fprintln(w, "        show help")
 }
 
 func runDaemon(configPath string) error {

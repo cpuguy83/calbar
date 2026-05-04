@@ -125,6 +125,24 @@ var controlCommandMethods = map[string]string{
 	"quit":   "Quit",
 }
 
+var controlCommandNames = []string{
+	"show",
+	"hide",
+	"toggle",
+	"search",
+	"sync",
+	"quit",
+}
+
+var controlCommandDescriptions = map[string]string{
+	"show":   "Show the configured CalBar UI",
+	"hide":   "Hide the configured CalBar UI",
+	"toggle": "Toggle the configured CalBar UI",
+	"search": "Show the configured CalBar UI and focus search when supported",
+	"sync":   "Trigger a calendar sync",
+	"quit":   "Quit the running CalBar instance",
+}
+
 var controlMethods = []introspect.Method{
 	{Name: "Show"},
 	{Name: "Hide"},

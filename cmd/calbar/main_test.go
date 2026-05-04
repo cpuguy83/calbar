@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,12 +16,16 @@ func TestParseCLI(t *testing.T) {
 		args        []string
 		wantConfig  string
 		wantVerbose bool
+		wantHelp    bool
+		wantHelpCmd string
 		wantCommand string
 		wantArgs    []string
 		wantErr     bool
 	}{
 		{name: "daemon", args: nil},
 		{name: "daemon flags", args: []string{"--config", "test.yaml", "-v"}, wantConfig: "test.yaml", wantVerbose: true},
+		{name: "base help", args: []string{"--help"}, wantHelp: true},
+		{name: "help command", args: []string{"help", "search"}, wantHelp: true, wantHelpCmd: "search"},
 		{name: "command", args: []string{"show"}, wantCommand: "show"},
 		{name: "global flags before command", args: []string{"--config", "test.yaml", "toggle"}, wantConfig: "test.yaml", wantCommand: "toggle"},
 		{name: "command args preserved", args: []string{"search", "-v"}, wantCommand: "search", wantArgs: []string{"-v"}},
@@ -44,6 +50,12 @@ func TestParseCLI(t *testing.T) {
 			if got.verbose != tt.wantVerbose {
 				t.Fatalf("verbose got %v, want %v", got.verbose, tt.wantVerbose)
 			}
+			if got.help != tt.wantHelp {
+				t.Fatalf("help got %v, want %v", got.help, tt.wantHelp)
+			}
+			if got.helpCommand != tt.wantHelpCmd {
+				t.Fatalf("help command got %q, want %q", got.helpCommand, tt.wantHelpCmd)
+			}
 			if got.command != tt.wantCommand {
 				t.Fatalf("command got %q, want %q", got.command, tt.wantCommand)
 			}
@@ -59,10 +71,41 @@ func TestParseCLI(t *testing.T) {
 	}
 }
 
-func TestRunControlCommandRejectsArgs(t *testing.T) {
-	err := runControlCommand("show", []string{"extra"})
+func TestParseControlCommand(t *testing.T) {
+	help, err := parseControlCommand("show", []string{"--help"})
+	if err != nil {
+		t.Fatalf("unexpected help error: %v", err)
+	}
+	if !help {
+		t.Fatal("expected help")
+	}
+
+	help, err = parseControlCommand("show", []string{"extra"})
 	if err == nil {
 		t.Fatal("expected error")
+	}
+	if help {
+		t.Fatal("did not expect help")
+	}
+}
+
+func TestUsageOutput(t *testing.T) {
+	var base bytes.Buffer
+	printBaseUsage(&base)
+	baseText := base.String()
+	for _, want := range []string{"Usage:", "Commands:", "calbar [options] <command>", "search"} {
+		if !strings.Contains(baseText, want) {
+			t.Fatalf("base usage missing %q:\n%s", want, baseText)
+		}
+	}
+
+	var command bytes.Buffer
+	printCommandUsage(&command, "search")
+	commandText := command.String()
+	for _, want := range []string{"Usage:", "calbar search", "focus search"} {
+		if !strings.Contains(commandText, want) {
+			t.Fatalf("command usage missing %q:\n%s", want, commandText)
+		}
 	}
 }
 
