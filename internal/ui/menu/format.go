@@ -197,6 +197,21 @@ func formatEventDetails(e *calendar.Event, notificationBefore []time.Duration) (
 	if e.Location != "" {
 		lines = append(lines, fmt.Sprintf("  📍 %s", truncate(e.Location, 50)))
 	}
+	if e.Meeting.Service != "" && e.Meeting.Service != e.Location {
+		lines = append(lines, fmt.Sprintf("  💻 %s", e.Meeting.Service))
+	}
+	if e.Meeting.ID != "" {
+		lines = append(lines, fmt.Sprintf("  🔢 Meeting ID: %s", e.Meeting.ID))
+	}
+	if e.Meeting.Passcode != "" {
+		lines = append(lines, fmt.Sprintf("  🔑 Passcode: %s", e.Meeting.Passcode))
+	}
+	if e.Meeting.DialIn != "" {
+		lines = append(lines, fmt.Sprintf("  ☎ Dial-in: %s", e.Meeting.DialIn))
+	}
+	if e.Meeting.PhoneConferenceID != "" {
+		lines = append(lines, fmt.Sprintf("  ☎ Phone conference ID: %s", e.Meeting.PhoneConferenceID))
+	}
 
 	// Organizer
 	if e.Organizer != "" {
@@ -210,9 +225,17 @@ func formatEventDetails(e *calendar.Event, notificationBefore []time.Duration) (
 
 	// Links section
 	allLinks := links.DetectAll(e.Location, e.Description, e.URL)
+	if e.Meeting.URL != "" {
+		allLinks = append([]links.Link{{URL: e.Meeting.URL, Label: "Join " + links.Service(e.Meeting.URL) + " Meeting"}}, allLinks...)
+	}
 	if len(allLinks) > 0 {
 		lines = append(lines, "━━━━ Links ━━━━")
+		seen := make(map[string]bool)
 		for _, link := range allLinks {
+			if seen[link.URL] {
+				continue
+			}
+			seen[link.URL] = true
 			line := fmt.Sprintf("  🔗 %s", link.Label)
 			lines = append(lines, line)
 			// Store with trimmed key since dmenu may strip leading whitespace

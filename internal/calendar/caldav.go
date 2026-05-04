@@ -215,7 +215,7 @@ func (s *CalDAVSource) parseEventComponent(comp *ics.Component, calName string) 
 
 	// Description
 	if prop := comp.Props.Get(ics.PropDescription); prop != nil {
-		event.Description = prop.Value
+		event.Description = unescapeICSText(prop.Value)
 	}
 
 	// Location
@@ -227,6 +227,7 @@ func (s *CalDAVSource) parseEventComponent(comp *ics.Component, calName string) 
 	if prop := comp.Props.Get(ics.PropURL); prop != nil {
 		event.URL = prop.Value
 	}
+	parseCalbarMeetingProps(comp, &event)
 
 	// Organizer
 	if prop := comp.Props.Get(ics.PropOrganizer); prop != nil {

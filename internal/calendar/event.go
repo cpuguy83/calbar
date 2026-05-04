@@ -38,11 +38,24 @@ type Event struct {
 	// URL is a URL associated with the event (if any).
 	URL string
 
+	// Meeting contains structured online meeting details parsed from the source.
+	Meeting MeetingDetails
+
 	// NotifyAt contains absolute reminder times for this event instance.
 	NotifyAt []time.Time
 
 	// Stale indicates this event is from a failed sync and may be outdated.
 	Stale bool
+}
+
+// MeetingDetails contains structured online meeting information.
+type MeetingDetails struct {
+	URL               string
+	Service           string
+	ID                string
+	Passcode          string
+	DialIn            string
+	PhoneConferenceID string
 }
 
 // Duration returns the duration of the event.

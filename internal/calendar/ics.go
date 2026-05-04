@@ -127,7 +127,7 @@ func (s *ICSSource) parseEvent(comp *ics.Component) ([]Event, error) {
 
 	// Description
 	if prop := comp.Props.Get(ics.PropDescription); prop != nil {
-		base.Description = prop.Value
+		base.Description = unescapeICSText(prop.Value)
 	}
 
 	// Location
@@ -139,6 +139,7 @@ func (s *ICSSource) parseEvent(comp *ics.Component) ([]Event, error) {
 	if prop := comp.Props.Get(ics.PropURL); prop != nil {
 		base.URL = prop.Value
 	}
+	parseCalbarMeetingProps(comp, &base)
 
 	// Organizer
 	if prop := comp.Props.Get(ics.PropOrganizer); prop != nil {

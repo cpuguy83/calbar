@@ -2,6 +2,7 @@ package calendar
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +18,66 @@ func withLocalTimezone(t *testing.T, loc *time.Location) {
 	t.Cleanup(func() {
 		time.Local = prev
 	})
+}
+
+func TestWriteReadICS_PreservesMeetingDetails(t *testing.T) {
+	start := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
+	events := []Event{{
+		UID:         "meeting-1",
+		Summary:     "Meeting",
+		Description: "Useful description",
+		Start:       start,
+		End:         start.Add(time.Hour),
+		Source:      "ms365",
+		Meeting: MeetingDetails{
+			URL:               "https://teams.microsoft.com/meet/22792173431568?p=d4qiBuwhjR0xQOLil6",
+			Service:           "Microsoft Teams Meeting",
+			ID:                "227 921 734 315 68",
+			Passcode:          "Wi6P69wc",
+			DialIn:            "+1 323-849-4874,,864359718# United States, Los Angeles",
+			PhoneConferenceID: "864 359 718#",
+		},
+	}}
+
+	path := filepath.Join(t.TempDir(), "events.ics")
+	if err := WriteICS(path, events); err != nil {
+		t.Fatalf("WriteICS error: %v", err)
+	}
+
+	parsed, err := ReadICS(path)
+	if err != nil {
+		t.Fatalf("ParseICS error: %v", err)
+	}
+	if len(parsed) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(parsed))
+	}
+	if parsed[0].Meeting != events[0].Meeting {
+		t.Fatalf("unexpected meeting details: got %#v want %#v", parsed[0].Meeting, events[0].Meeting)
+	}
+}
+
+func TestParseICS_DescriptionUnescapesLiteralNewlines(t *testing.T) {
+	icsData := `BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:test-cache-description-newlines
+SUMMARY:Meeting
+DESCRIPTION:Line one\nLine two\NLine three
+DTSTART:20260217T100000
+DTEND:20260217T110000
+END:VEVENT
+END:VCALENDAR`
+
+	events, err := ParseICS(strings.NewReader(icsData))
+	if err != nil {
+		t.Fatalf("ParseICS error: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	want := "Line one\nLine two\nLine three"
+	if got := events[0].Description; got != want {
+		t.Fatalf("unexpected description: got %q want %q", got, want)
+	}
 }
 
 func TestParseEvent_EffectivelyAllDay(t *testing.T) {
@@ -97,6 +158,46 @@ END:VCALENDAR`
 		}
 		if !events[0].AllDay {
 			t.Errorf("expected AllDay=true for date-only event, got false")
+		}
+	}
+}
+
+func TestParseEvent_DescriptionUnescapesLiteralNewlines(t *testing.T) {
+	icsData := `BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:test-description-newlines
+SUMMARY:Meeting
+DESCRIPTION:Line one\nLine two\NLine three\, with comma\; and semicolon
+DTSTART:20260217T100000
+DTEND:20260217T110000
+END:VEVENT
+END:VCALENDAR`
+
+	dec := ics.NewDecoder(strings.NewReader(icsData))
+	cal, err := dec.Decode()
+	if err != nil {
+		t.Fatalf("failed to decode ICS: %v", err)
+	}
+
+	s := &ICSSource{
+		name: "test",
+		end:  time.Date(2026, 3, 1, 0, 0, 0, 0, time.Local),
+	}
+
+	for _, child := range cal.Children {
+		if child.Name != ics.CompEvent {
+			continue
+		}
+		events, err := s.parseEvent(child)
+		if err != nil {
+			t.Fatalf("parseEvent error: %v", err)
+		}
+		if len(events) != 1 {
+			t.Fatalf("expected 1 event, got %d", len(events))
+		}
+		want := "Line one\nLine two\nLine three, with comma; and semicolon"
+		if got := events[0].Description; got != want {
+			t.Fatalf("unexpected description: got %q want %q", got, want)
 		}
 	}
 }

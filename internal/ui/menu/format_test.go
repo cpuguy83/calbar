@@ -105,3 +105,37 @@ func TestFormatEventDetails_ShowsOverrideReminderDetails(t *testing.T) {
 		t.Fatalf("expected at-start reminder, got %q", joined)
 	}
 }
+
+func TestFormatEventDetails_ShowsMeetingDetails(t *testing.T) {
+	start := time.Date(2026, 5, 5, 12, 0, 0, 0, time.Local)
+	lines, urlMap := formatEventDetails(&calendar.Event{
+		Summary:  "Teams meeting",
+		Start:    start,
+		End:      start.Add(time.Hour),
+		Location: "Conference Room",
+		Meeting: calendar.MeetingDetails{
+			URL:               "https://teams.microsoft.com/meet/22792173431568?p=d4qiBuwhjR0xQOLil6",
+			Service:           "Microsoft Teams Meeting",
+			ID:                "227 921 734 315 68",
+			Passcode:          "Wi6P69wc",
+			DialIn:            "+1 323-849-4874,,864359718# United States, Los Angeles",
+			PhoneConferenceID: "864 359 718#",
+		},
+	}, nil)
+
+	joined := strings.Join(lines, "\n")
+	for _, want := range []string{
+		"Microsoft Teams Meeting",
+		"Meeting ID: 227 921 734 315 68",
+		"Passcode: Wi6P69wc",
+		"Dial-in: +1 323-849-4874,,864359718# United States, Los Angeles",
+		"Phone conference ID: 864 359 718#",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected %q in details, got %q", want, joined)
+		}
+	}
+	if got := urlMap["🔗 Join Teams Meeting"]; got != "https://teams.microsoft.com/meet/22792173431568?p=d4qiBuwhjR0xQOLil6" {
+		t.Fatalf("unexpected join URL: %q", got)
+	}
+}

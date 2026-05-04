@@ -7,9 +7,20 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	ics "github.com/emersion/go-ical"
+)
+
+const (
+	xCalbarSource                   = "X-CALBAR-SOURCE"
+	xCalbarMeetingURL               = "X-CALBAR-MEETING-URL"
+	xCalbarMeetingService           = "X-CALBAR-MEETING-SERVICE"
+	xCalbarMeetingID                = "X-CALBAR-MEETING-ID"
+	xCalbarMeetingPasscode          = "X-CALBAR-MEETING-PASSCODE"
+	xCalbarMeetingDialIn            = "X-CALBAR-MEETING-DIALIN"
+	xCalbarMeetingPhoneConferenceID = "X-CALBAR-MEETING-PHONE-CONFERENCE-ID"
 )
 
 // Merge combines events from multiple sources into a single slice.
@@ -33,7 +44,7 @@ func Merge(eventSets ...[]Event) []Event {
 func WriteICS(path string, events []Event) error {
 	// Ensure directory exists
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create directory: %w", err)
 	}
 
@@ -60,6 +71,24 @@ func WriteICS(path string, events []Event) error {
 		if event.URL != "" {
 			comp.Props.SetText(ics.PropURL, event.URL)
 		}
+		if event.Meeting.URL != "" {
+			comp.Props.SetText(xCalbarMeetingURL, event.Meeting.URL)
+		}
+		if event.Meeting.Service != "" {
+			comp.Props.SetText(xCalbarMeetingService, event.Meeting.Service)
+		}
+		if event.Meeting.ID != "" {
+			comp.Props.SetText(xCalbarMeetingID, event.Meeting.ID)
+		}
+		if event.Meeting.Passcode != "" {
+			comp.Props.SetText(xCalbarMeetingPasscode, event.Meeting.Passcode)
+		}
+		if event.Meeting.DialIn != "" {
+			comp.Props.SetText(xCalbarMeetingDialIn, event.Meeting.DialIn)
+		}
+		if event.Meeting.PhoneConferenceID != "" {
+			comp.Props.SetText(xCalbarMeetingPhoneConferenceID, event.Meeting.PhoneConferenceID)
+		}
 		if event.Organizer != "" {
 			comp.Props.SetText(ics.PropOrganizer, "mailto:"+event.Organizer)
 		}
@@ -74,7 +103,7 @@ func WriteICS(path string, events []Event) error {
 		}
 
 		// Add custom property for source
-		comp.Props.SetText("X-CALBAR-SOURCE", event.Source)
+		comp.Props.SetText(xCalbarSource, event.Source)
 
 		cal.Children = append(cal.Children, comp)
 	}
@@ -88,7 +117,7 @@ func WriteICS(path string, events []Event) error {
 
 	// Write to temp file
 	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, buf.Bytes(), 0644); err != nil {
+	if err := os.WriteFile(tmpPath, buf.Bytes(), 0o644); err != nil {
 		return fmt.Errorf("write temp file: %w", err)
 	}
 
@@ -168,7 +197,7 @@ func parseEventComponent(comp *ics.Component) (Event, error) {
 
 	// Description
 	if prop := comp.Props.Get(ics.PropDescription); prop != nil {
-		event.Description = prop.Value
+		event.Description = unescapeICSText(prop.Value)
 	}
 
 	// Location
@@ -190,9 +219,10 @@ func parseEventComponent(comp *ics.Component) (Event, error) {
 	}
 
 	// Source (custom property)
-	if prop := comp.Props.Get("X-CALBAR-SOURCE"); prop != nil {
+	if prop := comp.Props.Get(xCalbarSource); prop != nil {
 		event.Source = prop.Value
 	}
+	parseCalbarMeetingProps(comp, &event)
 
 	// Start time
 	if prop := comp.Props.Get(ics.PropDateTimeStart); prop != nil {
@@ -227,6 +257,36 @@ func parseEventComponent(comp *ics.Component) (Event, error) {
 	}
 
 	return event, nil
+}
+
+func parseCalbarMeetingProps(comp *ics.Component, event *Event) {
+	if prop := comp.Props.Get(xCalbarMeetingURL); prop != nil {
+		event.Meeting.URL = unescapeICSText(prop.Value)
+	}
+	if prop := comp.Props.Get(xCalbarMeetingService); prop != nil {
+		event.Meeting.Service = unescapeICSText(prop.Value)
+	}
+	if prop := comp.Props.Get(xCalbarMeetingID); prop != nil {
+		event.Meeting.ID = unescapeICSText(prop.Value)
+	}
+	if prop := comp.Props.Get(xCalbarMeetingPasscode); prop != nil {
+		event.Meeting.Passcode = unescapeICSText(prop.Value)
+	}
+	if prop := comp.Props.Get(xCalbarMeetingDialIn); prop != nil {
+		event.Meeting.DialIn = unescapeICSText(prop.Value)
+	}
+	if prop := comp.Props.Get(xCalbarMeetingPhoneConferenceID); prop != nil {
+		event.Meeting.PhoneConferenceID = unescapeICSText(prop.Value)
+	}
+}
+
+func unescapeICSText(s string) string {
+	s = strings.ReplaceAll(s, `\\`, `\`)
+	s = strings.ReplaceAll(s, `\n`, "\n")
+	s = strings.ReplaceAll(s, `\N`, "\n")
+	s = strings.ReplaceAll(s, `\,`, ",")
+	s = strings.ReplaceAll(s, `\;`, ";")
+	return s
 }
 
 // parseDateValue parses a date-only value (YYYYMMDD format).

@@ -12,8 +12,8 @@ var patterns = []*regexp.Regexp{
 	// Zoom
 	regexp.MustCompile(`https?://[\w.-]*zoom\.us/j/[\w?=&-]+`),
 
-	// Microsoft Teams - must include query params for meeting context
-	regexp.MustCompile(`https?://teams\.microsoft\.com/l/meetup-join/[^\s<>"]+`),
+	// Microsoft Teams
+	regexp.MustCompile(`https?://teams\.microsoft\.com/(?:l/meetup-join|meet)/[^\s<>"]+`),
 
 	// Google Meet
 	regexp.MustCompile(`https?://meet\.google\.com/[\w-]+`),

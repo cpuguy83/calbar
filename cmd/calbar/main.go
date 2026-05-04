@@ -871,7 +871,10 @@ func (a *App) sendNotification(event calendar.Event, startsIn time.Duration) {
 	}
 
 	// Add join action if meeting link detected
-	meetingLink := links.DetectFromEvent(event.Location, event.Description, event.URL)
+	meetingLink := event.Meeting.URL
+	if meetingLink == "" {
+		meetingLink = links.DetectFromEvent(event.Location, event.Description, event.URL)
+	}
 	if meetingLink != "" {
 		notif.Actions = []notify.Action{
 			{Key: "join", Label: "Join Meeting"},

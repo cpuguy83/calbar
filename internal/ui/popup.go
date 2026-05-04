@@ -1820,7 +1820,11 @@ func (p *Popup) createTimedEventRow(event calendar.Event, now time.Time) *gtk.Bo
 	}
 
 	// Join button
-	if meetingLink := links.DetectFromEvent(event.Location, event.Description, event.URL); meetingLink != "" {
+	meetingLink := event.Meeting.URL
+	if meetingLink == "" {
+		meetingLink = links.DetectFromEvent(event.Location, event.Description, event.URL)
+	}
+	if meetingLink != "" {
 		btn := p.createJoinButton(meetingLink, nil)
 		appendOwned(row, &btn.Widget, btn)
 	}
@@ -2191,6 +2195,21 @@ func (p *Popup) showDetails(event calendar.Event) {
 	if event.Location != "" {
 		p.addDetailRow(content, "📍", event.Location)
 	}
+	if event.Meeting.Service != "" && event.Meeting.Service != event.Location {
+		p.addDetailRow(content, "💻", event.Meeting.Service)
+	}
+	if event.Meeting.ID != "" {
+		p.addDetailRow(content, "🔢", "Meeting ID: "+event.Meeting.ID)
+	}
+	if event.Meeting.Passcode != "" {
+		p.addDetailRow(content, "🔑", "Passcode: "+event.Meeting.Passcode)
+	}
+	if event.Meeting.DialIn != "" {
+		p.addDetailRow(content, "☎", "Dial-in: "+event.Meeting.DialIn)
+	}
+	if event.Meeting.PhoneConferenceID != "" {
+		p.addDetailRow(content, "☎", "Phone conference ID: "+event.Meeting.PhoneConferenceID)
+	}
 
 	// Organizer
 	if event.Organizer != "" {
@@ -2226,7 +2245,11 @@ func (p *Popup) showDetails(event calendar.Event) {
 	}
 
 	// Join button (if meeting link exists)
-	if meetingLink := links.DetectFromEvent(event.Location, event.Description, event.URL); meetingLink != "" {
+	meetingLink := event.Meeting.URL
+	if meetingLink == "" {
+		meetingLink = links.DetectFromEvent(event.Location, event.Description, event.URL)
+	}
+	if meetingLink != "" {
 		btnBox := gtk.NewBox(gtk.OrientationHorizontalValue, 0)
 		btnBox.AddCssClass("details-join-box")
 		btnBox.SetHalign(gtk.AlignCenterValue)
@@ -2439,10 +2462,12 @@ func (p *Popup) addDetailRow(container *gtk.Box, icon string, text string) {
 
 // stripHTML removes HTML tags and converts to readable plain text.
 func stripHTML(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
+
 	var result []byte
 	inTag := false
 	tagName := ""
-	lastWasNewline := false
 	lastWasSpace := false
 
 	// Helper to add newline(s)
@@ -2460,7 +2485,6 @@ func stripHTML(s string) string {
 		for i := existing; i < count; i++ {
 			result = append(result, '\n')
 		}
-		lastWasNewline = true
 		lastWasSpace = true
 	}
 
@@ -2568,18 +2592,14 @@ func stripHTML(s string) string {
 				} else {
 					result = append(result, replacement)
 					lastWasSpace = false
-					lastWasNewline = false
 				}
 				continue
 			}
 		}
 
 		// Handle whitespace
-		if c == '\n' || c == '\r' {
-			if !lastWasNewline && !lastWasSpace {
-				result = append(result, ' ')
-				lastWasSpace = true
-			}
+		if c == '\n' {
+			addNewline(1)
 			continue
 		}
 		if c == '\t' || c == ' ' {
@@ -2593,7 +2613,6 @@ func stripHTML(s string) string {
 		// Regular character
 		result = append(result, c)
 		lastWasSpace = false
-		lastWasNewline = false
 	}
 
 	// Trim leading/trailing whitespace

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -312,11 +313,13 @@ func (s *MS365Source) convertEvent(ge graphEvent) (Event, error) {
 	}
 
 	// Description - prefer body content over preview
+	var description string
 	if ge.Body != nil && ge.Body.Content != "" {
-		event.Description = ge.Body.Content
+		description = ge.Body.Content
 	} else {
-		event.Description = ge.BodyPreview
+		description = ge.BodyPreview
 	}
+	event.Meeting, event.Description = parseMS365MeetingDetails(description)
 
 	// Organizer
 	if ge.Organizer != nil {
@@ -325,19 +328,15 @@ func (s *MS365Source) convertEvent(ge graphEvent) (Event, error) {
 
 	// Online meeting URL (Teams, etc.)
 	if ge.OnlineMeeting != nil && ge.OnlineMeeting.JoinURL != "" {
-		// Store meeting URL in location if no location set
-		if event.Location == "" {
-			event.Location = ge.OnlineMeeting.JoinURL
-		} else {
-			// Append to description so it's detectable
-			event.Description = ge.OnlineMeeting.JoinURL + "\n" + event.Description
-		}
+		event.Meeting.URL = ge.OnlineMeeting.JoinURL
 	} else if ge.OnlineMeetingURL != "" {
-		if event.Location == "" {
-			event.Location = ge.OnlineMeetingURL
-		} else {
-			event.Description = ge.OnlineMeetingURL + "\n" + event.Description
-		}
+		event.Meeting.URL = ge.OnlineMeetingURL
+	}
+	if event.Meeting.Service == "" && strings.Contains(strings.ToLower(event.Meeting.URL), "teams.microsoft.com") {
+		event.Meeting.Service = "Microsoft Teams Meeting"
+	}
+	if event.Location == "" && event.Meeting.Service != "" {
+		event.Location = event.Meeting.Service
 	}
 
 	// Detect effectively all-day events (midnight-to-midnight datetime encoding)
