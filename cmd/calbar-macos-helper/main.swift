@@ -279,12 +279,11 @@ final class CalendarViewController: NSViewController, NSSearchFieldDelegate {
         actions.addArrangedSubview(ActionButton(title: "Hide") { [weak self] in self?.onHide?(event.uid) })
         row.addArrangedSubview(actions)
 
-        let box = NSBox()
-        box.boxType = .custom
-        box.borderType = .lineBorder
-        box.borderColor = NSColor.separatorColor
-        box.cornerRadius = 8
-        box.contentViewMargins = NSSize(width: 0, height: 0)
+        let box = NSView()
+        box.wantsLayer = true
+        box.layer?.borderWidth = 1
+        box.layer?.borderColor = NSColor.separatorColor.cgColor
+        box.layer?.cornerRadius = 8
         box.translatesAutoresizingMaskIntoConstraints = false
         row.translatesAutoresizingMaskIntoConstraints = false
         box.addSubview(row)
