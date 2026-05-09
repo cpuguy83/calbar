@@ -6,9 +6,9 @@ const (
 	// DefaultBrokerClientID is the Edge browser client ID, used with Microsoft Identity Broker SSO.
 	DefaultBrokerClientID = "d7b530a4-7680-4c23-a8bf-c52c121d2e87"
 
-	// DefaultBrowserClientID is the Microsoft Graph PowerShell public client ID.
+	// DefaultBrowserClientID is the Microsoft Outlook public client ID.
 	// Its app registration supports loopback redirects used by MSAL browser auth.
-	DefaultBrowserClientID = "14d82eec-204b-4c2f-b7e8-296a70dab67e"
+	DefaultBrowserClientID = "d3590ed6-52b3-4102-aeff-aad2292ab01c"
 
 	// DefaultClientID is kept as the broker default for existing internal callers.
 	DefaultClientID = DefaultBrokerClientID
