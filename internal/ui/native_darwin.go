@@ -5,6 +5,7 @@ package ui
 import (
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -116,17 +117,28 @@ func (n *Native) sendEvents() {
 			continue
 		}
 		items = append(items, macos.Event{
-			UID:        event.UID,
-			Summary:    event.Summary,
-			TimeText:   nativeEventTimeText(event, now),
-			Location:   event.Location,
-			Source:     event.Source,
-			MeetingURL: nativeMeetingURL(event),
-			AllDay:     event.AllDay,
-			Stale:      event.Stale,
+			UID:           event.UID,
+			Summary:       event.Summary,
+			Section:       nativeEventSection(event, now),
+			TimeText:      nativeEventTimeText(event, now),
+			TimePrimary:   nativeEventTimePrimary(event, now),
+			TimeSecondary: nativeEventTimeSecondary(event),
+			Metadata:      nativeEventMetadata(event),
+			Location:      event.Location,
+			Source:        event.Source,
+			MeetingURL:    nativeMeetingURL(event),
+			AllDay:        event.AllDay,
+			Stale:         event.Stale,
 		})
 	}
 	_ = n.frontend.Send(macos.Command{Type: "set_events", Events: items})
+}
+
+func nativeEventSection(event calendar.Event, now time.Time) string {
+	if event.AllDay {
+		return "Today"
+	}
+	return nativeDayLabel(event.Start, now)
 }
 
 func nativeEventTimeText(event calendar.Event, now time.Time) string {
@@ -140,6 +152,41 @@ func nativeEventTimeText(event calendar.Event, now time.Time) string {
 		return fmt.Sprintf("Now until %s", end.Format("3:04 PM"))
 	}
 	return fmt.Sprintf("%s, %s-%s", day, start.Format("3:04 PM"), end.Format("3:04 PM"))
+}
+
+func nativeEventTimePrimary(event calendar.Event, now time.Time) string {
+	if event.AllDay {
+		return "All"
+	}
+	if event.IsOngoing(now) {
+		return "Now"
+	}
+	return compactNativeTime(event.Start.Local())
+}
+
+func nativeEventTimeSecondary(event calendar.Event) string {
+	if event.AllDay {
+		return "Day"
+	}
+	return compactNativeTime(event.End.Local())
+}
+
+func compactNativeTime(t time.Time) string {
+	return t.Format("3:04p")
+}
+
+func nativeEventMetadata(event calendar.Event) string {
+	parts := make([]string, 0, 2)
+	if event.Source != "" {
+		parts = append(parts, event.Source)
+	}
+	if nativeMeetingURL(event) != "" {
+		parts = append(parts, "meeting link")
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, " · ")
 }
 
 func nativeDayLabel(t time.Time, now time.Time) string {

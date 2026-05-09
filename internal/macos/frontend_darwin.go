@@ -28,14 +28,18 @@ type Command struct {
 }
 
 type Event struct {
-	UID        string `json:"uid"`
-	Summary    string `json:"summary"`
-	TimeText   string `json:"timeText"`
-	Location   string `json:"location,omitempty"`
-	Source     string `json:"source,omitempty"`
-	MeetingURL string `json:"meetingURL,omitempty"`
-	AllDay     bool   `json:"allDay,omitempty"`
-	Stale      bool   `json:"stale,omitempty"`
+	UID           string `json:"uid"`
+	Summary       string `json:"summary"`
+	Section       string `json:"section,omitempty"`
+	TimeText      string `json:"timeText"`
+	TimePrimary   string `json:"timePrimary,omitempty"`
+	TimeSecondary string `json:"timeSecondary,omitempty"`
+	Metadata      string `json:"metadata,omitempty"`
+	Location      string `json:"location,omitempty"`
+	Source        string `json:"source,omitempty"`
+	MeetingURL    string `json:"meetingURL,omitempty"`
+	AllDay        bool   `json:"allDay,omitempty"`
+	Stale         bool   `json:"stale,omitempty"`
 }
 
 type EventMessage struct {
