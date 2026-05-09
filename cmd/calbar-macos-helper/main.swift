@@ -223,7 +223,9 @@ final class CalendarViewController: NSViewController, NSSearchFieldDelegate {
         }
 
         for event in visible {
-            eventsStack.addArrangedSubview(makeEventRow(event))
+            let row = makeEventRow(event)
+            eventsStack.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: eventsStack.widthAnchor, constant: -2).isActive = true
         }
     }
 
@@ -290,8 +292,7 @@ final class CalendarViewController: NSViewController, NSSearchFieldDelegate {
             row.leadingAnchor.constraint(equalTo: box.leadingAnchor),
             row.trailingAnchor.constraint(equalTo: box.trailingAnchor),
             row.topAnchor.constraint(equalTo: box.topAnchor),
-            row.bottomAnchor.constraint(equalTo: box.bottomAnchor),
-            box.widthAnchor.constraint(equalTo: eventsStack.widthAnchor, constant: -2)
+            row.bottomAnchor.constraint(equalTo: box.bottomAnchor)
         ])
         return box
     }
