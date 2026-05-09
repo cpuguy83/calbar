@@ -2,6 +2,7 @@
 
 PREFIX ?= /usr/local
 BINDIR ?= $(PREFIX)/bin
+MACOSX_DEPLOYMENT_TARGET ?= 26.0
 
 all: build
 
@@ -9,7 +10,7 @@ build:
 	go build -o calbar ./cmd/calbar
 
 build-macos-helper:
-	xcrun swiftc -O cmd/calbar-macos-helper/main.swift -o calbar-macos-helper
+	MACOSX_DEPLOYMENT_TARGET=$(MACOSX_DEPLOYMENT_TARGET) xcrun swiftc -O cmd/calbar-macos-helper/main.swift -o calbar-macos-helper
 
 build-macos: build build-macos-helper
 
