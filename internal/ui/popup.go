@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -54,6 +55,7 @@ type Popup struct {
 	statusBar     *gtk.Box
 	statusText    *gtk.Label
 	hiddenCount   *gtk.Label
+	syncErrorIcon *gtk.Label
 	syncButton    *gtk.Button
 	syncIndicator *gtk.Box
 	searchButton  *gtk.Button
@@ -65,6 +67,7 @@ type Popup struct {
 	listView          *gtk.Box
 	detailsView       *gtk.Box
 	hiddenView        *gtk.Box
+	syncErrorsView    *gtk.Box
 	detailsEvent      *calendar.Event
 	detailsFromHidden bool // true if viewing details from hidden events list
 
@@ -76,6 +79,7 @@ type Popup struct {
 	stale              bool
 	lastSync           time.Time
 	loading            bool
+	syncErrors         []string
 	searchQuery        string
 	pointerInside      bool
 	hoverDismissDelay  time.Duration
@@ -92,6 +96,7 @@ type Popup struct {
 	eventRowClickCb        stableCallback[func(gtk.GestureClick, int, float64, float64)]
 	eventRowRightClickCb   stableCallback[func(gtk.GestureClick, int, float64, float64)]
 	hiddenIndicatorClickCb stableCallback[func(gtk.GestureClick, int, float64, float64)]
+	syncErrorClickCb       stableCallback[func(gtk.GestureClick, int, float64, float64)]
 	unhideRowClickCb       stableCallback[func(gtk.GestureClick, int, float64, float64)]
 	unhideBtnClickCb       stableCallback[func(gtk.Button)]
 	joinClickCb            stableCallback[func(gtk.Button)]
@@ -104,6 +109,7 @@ type Popup struct {
 	searchStopCb           stableCallback[func(gtk.SearchEntry)]
 	backBtnClickCb         stableCallback[func(gtk.Button)]
 	hiddenBackBtnClickCb   stableCallback[func(gtk.Button)]
+	syncErrorsBackBtnCb    stableCallback[func(gtk.Button)]
 	updateListCb           stableCallback[glib.SourceFunc]
 	updateHiddenViewCb     stableCallback[glib.SourceFunc]
 	updateStatusCb         stableCallback[glib.SourceFunc]
@@ -252,6 +258,20 @@ func (p *Popup) getHiddenIndicatorClickCb() *func(gtk.GestureClick, int, float64
 	})
 }
 
+func (p *Popup) getSyncErrorClickCb() *func(gtk.GestureClick, int, float64, float64) {
+	return p.syncErrorClickCb.get(func() func(gtk.GestureClick, int, float64, float64) {
+		return func(gesture gtk.GestureClick, nPress int, x, y float64) {
+			p.mu.RLock()
+			hasErrors := len(p.syncErrors) > 0
+			p.mu.RUnlock()
+			if !hasErrors {
+				return
+			}
+			p.showSyncErrorsView()
+		}
+	})
+}
+
 func (p *Popup) getUnhideRowClickCb() *func(gtk.GestureClick, int, float64, float64) {
 	return p.unhideRowClickCb.get(func() func(gtk.GestureClick, int, float64, float64) {
 		return func(gesture gtk.GestureClick, nPress int, x, y float64) {
@@ -348,6 +368,14 @@ func (p *Popup) getHiddenBackBtnClickCb() *func(gtk.Button) {
 	return p.hiddenBackBtnClickCb.get(func() func(gtk.Button) {
 		return func(btn gtk.Button) {
 			p.hideHiddenView()
+		}
+	})
+}
+
+func (p *Popup) getSyncErrorsBackBtnClickCb() *func(gtk.Button) {
+	return p.syncErrorsBackBtnCb.get(func() func(gtk.Button) {
+		return func(btn gtk.Button) {
+			p.hideSyncErrorsView()
 		}
 	})
 }
@@ -580,6 +608,10 @@ func (p *Popup) Init() {
 				p.hideHiddenView()
 				return true
 			}
+			if p.stack != nil && p.stack.GetVisibleChildName() == "sync-errors" {
+				p.hideSyncErrorsView()
+				return true
+			}
 			p.hideAll()
 			return true
 		}
@@ -695,6 +727,10 @@ func (p *Popup) buildUI() {
 	p.hiddenView = gtk.NewBox(gtk.OrientationVerticalValue, 0)
 	p.stack.AddNamed(&p.hiddenView.Widget, "hidden")
 
+	// Sync errors view
+	p.syncErrorsView = gtk.NewBox(gtk.OrientationVerticalValue, 0)
+	p.stack.AddNamed(&p.syncErrorsView.Widget, "sync-errors")
+
 	// Status bar (always visible at bottom, outside stack)
 	p.statusBar = gtk.NewBox(gtk.OrientationHorizontalValue, 8)
 	p.statusBar.AddCssClass("status-bar")
@@ -703,7 +739,16 @@ func (p *Popup) buildUI() {
 	p.statusText = gtk.NewLabel("")
 	p.statusText.SetXalign(0)
 	p.statusText.SetHexpand(true)
+	p.statusText.SetEllipsize(pango.EllipsizeEndValue)
 	p.statusBar.Append(&p.statusText.Widget)
+
+	p.syncErrorIcon = gtk.NewLabel("⚠")
+	p.syncErrorIcon.AddCssClass("sync-error-indicator")
+	p.syncErrorIcon.SetVisible(false)
+	syncErrorClick := gtk.NewGestureClick()
+	syncErrorClick.ConnectReleased(p.getSyncErrorClickCb())
+	p.syncErrorIcon.AddController(&syncErrorClick.EventController)
+	p.statusBar.Append(&p.syncErrorIcon.Widget)
 
 	// Right side: hidden count (clickable)
 	p.hiddenCount = gtk.NewLabel("")
@@ -1254,6 +1299,45 @@ func (p *Popup) applyCSS() {
 			color: @view_fg_color;
 		}
 
+		.sync-error-indicator {
+			cursor: pointer;
+			color: @warning_color;
+			font-weight: 700;
+			padding: 2px 6px;
+			border-radius: 4px;
+		}
+
+		.sync-error-indicator:hover {
+			background: alpha(@warning_color, 0.15);
+			color: @warning_color;
+		}
+
+		.sync-errors-list {
+			background: transparent;
+		}
+
+		.sync-errors-instruction {
+			padding: 10px 16px;
+			font-size: 12px;
+			color: alpha(@view_fg_color, 0.6);
+			border-bottom: 1px solid alpha(@borders, 0.2);
+		}
+
+		.sync-error-row {
+			padding: 12px 16px;
+			border-bottom: 1px solid alpha(@borders, 0.2);
+		}
+
+		.sync-error-row-icon {
+			min-width: 20px;
+			color: @warning_color;
+		}
+
+		.sync-error-row-text {
+			font-size: 13px;
+			color: @view_fg_color;
+		}
+
 		/* Hidden events view */
 		.hidden-events-list {
 			background: transparent;
@@ -1417,6 +1501,15 @@ func (p *Popup) SetLoading(loading bool) {
 	p.mu.Unlock()
 
 	glib.IdleAdd(p.getUpdateListCb(), 0)
+	glib.IdleAdd(p.getUpdateStatusCb(), 0)
+}
+
+// SetSyncErrors updates the visible sync failure messages.
+func (p *Popup) SetSyncErrors(messages []string) {
+	p.mu.Lock()
+	p.syncErrors = slices.Clone(messages)
+	p.mu.Unlock()
+
 	glib.IdleAdd(p.getUpdateStatusCb(), 0)
 }
 
@@ -2069,6 +2162,7 @@ func (p *Popup) updateStatusBar() {
 	lastSync := p.lastSync
 	eventCount := len(p.events)
 	loading := p.loading
+	syncErrors := slices.Clone(p.syncErrors)
 	p.mu.RUnlock()
 	if p.syncIndicator != nil {
 		p.syncIndicator.SetVisible(loading)
@@ -2083,11 +2177,31 @@ func (p *Popup) updateStatusBar() {
 	}
 
 	p.statusBar.RemoveCssClass("stale")
+	if len(syncErrors) == 0 && p.stack != nil && p.stack.GetVisibleChildName() == "sync-errors" {
+		p.hideSyncErrorsView()
+	}
+	if p.syncErrorIcon != nil {
+		if len(syncErrors) == 0 {
+			p.syncErrorIcon.SetVisible(false)
+			p.syncErrorIcon.SetTooltipText("")
+		} else {
+			tooltip := formatSyncErrorsTooltip(syncErrors)
+			p.syncErrorIcon.SetTooltipText(tooltip)
+			p.syncErrorIcon.SetVisible(true)
+		}
+	}
 
 	var text string
 	switch {
 	case loading:
 		text = "Syncing..."
+	case len(syncErrors) > 0:
+		if len(syncErrors) == 1 {
+			text = "1 calendar failed • Last sync: " + lastSync.Format("3:04 PM")
+		} else {
+			text = fmt.Sprintf("%d calendars failed • Last sync: %s", len(syncErrors), lastSync.Format("3:04 PM"))
+		}
+		p.statusBar.AddCssClass("stale")
 	case stale:
 		text = fmt.Sprintf("⚠ Data may be stale • Last sync: %s", lastSync.Format("3:04 PM"))
 		p.statusBar.AddCssClass("stale")
@@ -2098,6 +2212,7 @@ func (p *Popup) updateStatusBar() {
 	}
 
 	p.statusText.SetText(text)
+	p.statusText.SetTooltipText(text)
 }
 
 // updateHiddenIndicator updates the hidden events indicator in the status bar.
@@ -2119,6 +2234,16 @@ func (p *Popup) updateHiddenIndicator(count int) {
 	}
 	p.hiddenCount.SetText(text)
 	p.hiddenCount.SetVisible(true)
+}
+
+func formatSyncErrorsTooltip(messages []string) string {
+	if len(messages) == 0 {
+		return ""
+	}
+	if len(messages) == 1 {
+		return "Sync failure: " + messages[0]
+	}
+	return fmt.Sprintf("%d sync failures:\n%s", len(messages), strings.Join(messages, "\n"))
 }
 
 // showDetails displays the event details panel.
@@ -2380,6 +2505,92 @@ func (p *Popup) showHiddenView() {
 // hideHiddenView returns to the list view.
 func (p *Popup) hideHiddenView() {
 	p.stack.SetVisibleChildName("list")
+}
+
+// showSyncErrorsView displays the sync failure details view.
+func (p *Popup) showSyncErrorsView() {
+	if p.syncErrorsView == nil {
+		return
+	}
+	p.clearDetailsLookup()
+	p.clearHiddenLookup()
+	clearChildren(p.syncErrorsView)
+
+	header := gtk.NewBox(gtk.OrientationHorizontalValue, 8)
+	header.AddCssClass("details-header")
+
+	backBtn := gtk.NewButton()
+	backBtn.SetIconName("go-previous-symbolic")
+	backBtn.AddCssClass("details-back-btn")
+	backBtn.ConnectClicked(p.getSyncErrorsBackBtnClickCb())
+	appendOwned(header, &backBtn.Widget, backBtn)
+
+	headerTitle := gtk.NewLabel("Sync Failures")
+	headerTitle.AddCssClass("header-title")
+	headerTitle.SetHexpand(true)
+	headerTitle.SetXalign(0)
+	appendOwned(header, &headerTitle.Widget, headerTitle)
+
+	appendOwned(p.syncErrorsView, &header.Widget, header)
+
+	scrolled := gtk.NewScrolledWindow()
+	scrolled.SetVexpand(true)
+	scrolled.SetPolicy(gtk.PolicyNeverValue, gtk.PolicyAutomaticValue)
+	appendOwned(p.syncErrorsView, &scrolled.Widget, scrolled)
+
+	content := gtk.NewBox(gtk.OrientationVerticalValue, 0)
+	content.AddCssClass("sync-errors-list")
+	setOwnedChild(scrolled, &content.Widget, content)
+
+	p.mu.RLock()
+	messages := slices.Clone(p.syncErrors)
+	p.mu.RUnlock()
+
+	if len(messages) == 0 {
+		emptyLabel := gtk.NewLabel("No sync failures")
+		emptyLabel.AddCssClass("empty-subtitle")
+		emptyLabel.SetVexpand(true)
+		emptyLabel.SetValign(gtk.AlignCenterValue)
+		appendOwned(content, &emptyLabel.Widget, emptyLabel)
+	} else {
+		instructionLabel := gtk.NewLabel("The latest sync could not refresh these calendar sources.")
+		instructionLabel.AddCssClass("sync-errors-instruction")
+		instructionLabel.SetXalign(0)
+		instructionLabel.SetWrap(true)
+		instructionLabel.SetWrapMode(pango.WrapWordCharValue)
+		appendOwned(content, &instructionLabel.Widget, instructionLabel)
+
+		for _, message := range messages {
+			row := createSyncErrorRow(message)
+			appendOwned(content, &row.Widget, row)
+		}
+	}
+
+	p.stack.SetVisibleChildName("sync-errors")
+}
+
+// hideSyncErrorsView returns to the list view.
+func (p *Popup) hideSyncErrorsView() {
+	p.stack.SetVisibleChildName("list")
+}
+
+func createSyncErrorRow(message string) *gtk.Box {
+	row := gtk.NewBox(gtk.OrientationHorizontalValue, 8)
+	row.AddCssClass("sync-error-row")
+
+	icon := gtk.NewLabel("⚠")
+	icon.AddCssClass("sync-error-row-icon")
+	appendOwned(row, &icon.Widget, icon)
+
+	text := gtk.NewLabel(message)
+	text.AddCssClass("sync-error-row-text")
+	text.SetXalign(0)
+	text.SetWrap(true)
+	text.SetWrapMode(pango.WrapWordCharValue)
+	text.SetSelectable(true)
+	appendOwned(row, &text.Widget, text)
+
+	return row
 }
 
 // createHiddenEventRow creates a row for a hidden event.

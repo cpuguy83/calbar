@@ -26,6 +26,23 @@ type Syncer struct {
 	timeRange time.Duration
 }
 
+// SourceFailure describes a source that failed during sync.
+type SourceFailure struct {
+	Name string
+	Err  error
+}
+
+// Error returns a user-visible failure message.
+func (f SourceFailure) Error() string {
+	if f.Err == nil {
+		return f.Name
+	}
+	if f.Name == "" {
+		return f.Err.Error()
+	}
+	return fmt.Sprintf("%s: %v", f.Name, f.Err)
+}
+
 // NewSyncer creates a new Syncer from configuration.
 func NewSyncer(cfg *config.Config) (*Syncer, error) {
 	sources, err := createSources(cfg.Sources)
@@ -51,8 +68,8 @@ func (s *Syncer) SourceCount() int {
 }
 
 // Sync fetches all sources, applies per-source filters, and returns merged events.
-// Also returns the names of any sources that failed to sync.
-func (s *Syncer) Sync(ctx context.Context) ([]calendar.Event, []string, error) {
+// Also returns any sources that failed to sync.
+func (s *Syncer) Sync(ctx context.Context) ([]calendar.Event, []SourceFailure, error) {
 	slog.Info("starting sync", "sources", len(s.sources))
 
 	// Calculate end time from configured time range
@@ -106,12 +123,12 @@ func (s *Syncer) Sync(ctx context.Context) ([]calendar.Event, []string, error) {
 
 	// Collect results
 	var allEvents []calendar.Event
-	var failedSources []string
+	var failures []SourceFailure
 	var firstErr error
 	for r := range results {
 		if r.err != nil {
 			slog.Warn("failed to fetch source", "name", r.name, "error", r.err)
-			failedSources = append(failedSources, r.name)
+			failures = append(failures, SourceFailure{Name: r.name, Err: r.err})
 			if firstErr == nil {
 				firstErr = r.err
 			}
@@ -124,21 +141,21 @@ func (s *Syncer) Sync(ctx context.Context) ([]calendar.Event, []string, error) {
 	// Merge and sort
 	merged := calendar.Merge(allEvents)
 
-	slog.Info("sync complete", "events", len(merged), "failed_sources", len(failedSources))
+	slog.Info("sync complete", "events", len(merged), "failed_sources", len(failures))
 
 	// Return events even if some sources failed (partial success)
 	// Only return error if we got zero events and there was an error
 	if len(merged) == 0 && firstErr != nil {
-		return nil, failedSources, firstErr
+		return nil, failures, firstErr
 	}
 
-	return merged, failedSources, nil
+	return merged, failures, nil
 }
 
 // Run starts the sync loop, calling onSync after each sync completes.
-// The callback receives the synced events, names of failed sources, and any error.
+// The callback receives the synced events, failed sources, and any error.
 // Run blocks until the context is cancelled.
-func (s *Syncer) Run(ctx context.Context, onSync func([]calendar.Event, []string, error)) {
+func (s *Syncer) Run(ctx context.Context, onSync func([]calendar.Event, []SourceFailure, error)) {
 	// Initial sync
 	events, failedSources, err := s.Sync(ctx)
 	onSync(events, failedSources, err)

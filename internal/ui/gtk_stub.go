@@ -45,6 +45,9 @@ func (g *GTK) SetStale(stale bool) {}
 // SetLoading is a no-op stub.
 func (g *GTK) SetLoading(loading bool) {}
 
+// SetSyncErrors is a no-op stub.
+func (g *GTK) SetSyncErrors(messages []string) {}
+
 // OnAction is a no-op stub.
 func (g *GTK) OnAction(fn func(Action)) {}
 

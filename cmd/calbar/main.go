@@ -255,6 +255,7 @@ type App struct {
 	hiddenEntries []hiddenEntry // UIDs hidden by user, sorted by hide time (oldest first)
 	lastSync      time.Time
 	lastSyncErr   error
+	syncErrors    []string
 	syncing       bool
 
 	// Notification tracking
@@ -622,23 +623,42 @@ func (a *App) triggerSync() {
 	}
 
 	go func() {
-		events, failedSources, err := a.syncer.Sync(a.ctx)
-		a.onSyncComplete(events, failedSources, err)
+		events, failures, err := a.syncer.Sync(a.ctx)
+		a.onSyncComplete(events, failures, err)
 	}()
 }
 
+func formatSyncFailures(failures []sync.SourceFailure, err error) []string {
+	if len(failures) == 0 {
+		if err != nil {
+			return []string{err.Error()}
+		}
+		return nil
+	}
+
+	messages := make([]string, 0, len(failures))
+	for _, failure := range failures {
+		messages = append(messages, failure.Error())
+	}
+	return messages
+}
+
 // onSyncComplete is called after each sync completes.
-func (a *App) onSyncComplete(events []calendar.Event, failedSources []string, err error) {
+func (a *App) onSyncComplete(events []calendar.Event, failures []sync.SourceFailure, err error) {
 	a.mu.Lock()
+	syncErrors := formatSyncFailures(failures, err)
 	if err != nil {
 		slog.Warn("sync failed", "error", err)
 		a.lastSyncErr = err
+		a.syncErrors = syncErrors
 		// Keep old events on complete failure
 	} else {
 		// Build set of failed sources for quick lookup
-		failedSet := make(map[string]bool, len(failedSources))
-		for _, s := range failedSources {
-			failedSet[s] = true
+		failedSet := make(map[string]bool, len(failures))
+		failedSources := make([]string, 0, len(failures))
+		for _, failure := range failures {
+			failedSet[failure.Name] = true
+			failedSources = append(failedSources, failure.Name)
 		}
 
 		// Keep old events from failed sources, marking them as stale
@@ -659,8 +679,9 @@ func (a *App) onSyncComplete(events []calendar.Event, failedSources []string, er
 		// Merge and sort
 		a.events = calendar.Merge(merged)
 		a.lastSyncErr = nil
+		a.syncErrors = syncErrors
 
-		if len(failedSources) > 0 {
+		if len(failures) > 0 {
 			slog.Warn("some sources failed, keeping stale events", "failed_sources", failedSources)
 		}
 	}
@@ -679,6 +700,7 @@ func (a *App) updateUI() {
 	hidden := a.hiddenEvents()
 	lastSync := a.lastSync
 	lastSyncErr := a.lastSyncErr
+	syncErrors := slices.Clone(a.syncErrors)
 	a.mu.RUnlock()
 
 	// Update UI with events
@@ -686,8 +708,9 @@ func (a *App) updateUI() {
 	a.ui.SetHiddenEvents(hidden)
 
 	// Update stale state
-	isStale := lastSyncErr != nil || time.Since(lastSync) > 2*a.syncer.Interval()
+	isStale := len(syncErrors) > 0 || lastSyncErr != nil || time.Since(lastSync) > 2*a.syncer.Interval()
 	a.ui.SetStale(isStale)
+	a.ui.SetSyncErrors(syncErrors)
 
 	// Update tray state
 	if isStale {

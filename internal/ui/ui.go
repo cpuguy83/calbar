@@ -36,6 +36,9 @@ type UI interface {
 	// SetLoading marks the UI as actively syncing.
 	SetLoading(loading bool)
 
+	// SetSyncErrors updates the user-visible sync failure messages.
+	SetSyncErrors(messages []string)
+
 	// OnAction sets the callback for when a user performs an action.
 	OnAction(fn func(Action))
 

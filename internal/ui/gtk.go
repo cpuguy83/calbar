@@ -83,6 +83,11 @@ func (g *GTK) SetLoading(loading bool) {
 	g.popup.SetLoading(loading)
 }
 
+// SetSyncErrors updates the visible sync failure messages.
+func (g *GTK) SetSyncErrors(messages []string) {
+	g.popup.SetSyncErrors(messages)
+}
+
 // OnAction sets the callback for user actions.
 func (g *GTK) OnAction(fn func(Action)) {
 	g.onAction = fn

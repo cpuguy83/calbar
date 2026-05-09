@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os/exec"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -36,6 +37,7 @@ type Menu struct {
 	events       []calendar.Event
 	hiddenEvents []calendar.Event
 	stale        bool
+	syncErrors   []string
 	isShowing    bool
 }
 
@@ -137,6 +139,13 @@ func (m *Menu) SetStale(stale bool) {
 
 // SetLoading is a no-op for the menu backend.
 func (m *Menu) SetLoading(loading bool) {}
+
+// SetSyncErrors updates the sync failure messages.
+func (m *Menu) SetSyncErrors(messages []string) {
+	m.mu.Lock()
+	m.syncErrors = slices.Clone(messages)
+	m.mu.Unlock()
+}
 
 // OnAction sets the callback for user actions.
 func (m *Menu) OnAction(fn func(ui.Action)) {
