@@ -102,7 +102,7 @@ type UIConfig struct {
 	TimeRange         time.Duration  `yaml:"time_range"`          // How far ahead to look (default: 7 days)
 	MaxEvents         int            `yaml:"max_events"`          // Max events to show (default: 20)
 	Theme             string         `yaml:"theme"`               // "system", "light", "dark"
-	Backend           string         `yaml:"backend"`             // "auto", "gtk", "menu" (default: auto)
+	Backend           string         `yaml:"backend"`             // "auto", "native", "gtk", "menu" (default: auto)
 	CSSFile           string         `yaml:"css_file,omitempty"`  // Optional GTK CSS override file
 	Menu              MenuConfig     `yaml:"menu"`                // Menu-specific configuration
 	EventEndGrace     time.Duration  `yaml:"event_end_grace"`     // Keep events visible after they end (default: 5m)

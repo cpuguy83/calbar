@@ -2,7 +2,6 @@
 package links
 
 import (
-	"os/exec"
 	"regexp"
 	"strings"
 )
@@ -83,16 +82,6 @@ func DetectFromEvent(location, description, url string) string {
 
 	// Then try location and description
 	return Detect(location, description)
-}
-
-// Open opens a URL in the default browser using xdg-open.
-func Open(url string) error {
-	return exec.Command("xdg-open", url).Start()
-}
-
-// OpenPath opens a local path using the desktop's default handler.
-func OpenPath(path string) error {
-	return exec.Command("xdg-open", path).Start()
 }
 
 // Service returns the name of the meeting service for a URL.

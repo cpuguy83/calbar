@@ -1,4 +1,4 @@
-//go:build !nogtk && cgo
+//go:build linux && !nogtk && cgo
 
 // Package ui provides the GTK4/libadwaita popup window for calbar.
 package ui

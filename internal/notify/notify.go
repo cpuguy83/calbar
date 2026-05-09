@@ -1,3 +1,5 @@
+//go:build linux
+
 // Package notify provides desktop notifications via D-Bus.
 package notify
 

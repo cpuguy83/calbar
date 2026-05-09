@@ -1,4 +1,4 @@
-.PHONY: all build clean install test
+.PHONY: all build build-macos-helper build-macos clean install test
 
 PREFIX ?= /usr/local
 BINDIR ?= $(PREFIX)/bin
@@ -8,8 +8,13 @@ all: build
 build:
 	go build -o calbar ./cmd/calbar
 
+build-macos-helper:
+	xcrun swiftc -O cmd/calbar-macos-helper/main.swift -o calbar-macos-helper
+
+build-macos: build build-macos-helper
+
 clean:
-	rm -f calbar
+	rm -f calbar calbar-macos-helper
 
 install: build
 	install -Dm755 calbar $(DESTDIR)$(BINDIR)/calbar

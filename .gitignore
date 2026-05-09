@@ -1,5 +1,6 @@
 # Binaries
 /calbar
+/calbar-macos-helper
 
 # Personal config (use configs/config.example.yaml as template)
 config.yaml

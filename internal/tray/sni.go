@@ -1,3 +1,5 @@
+//go:build linux
+
 // Package tray provides system tray integration using StatusNotifierItem (SNI).
 package tray
 
@@ -466,7 +468,8 @@ func (m *dbusMenu) EventGroup(events []struct {
 	EventID   string
 	Data      dbus.Variant
 	Timestamp uint32
-}) ([]int32, []int32, *dbus.Error) {
+},
+) ([]int32, []int32, *dbus.Error) {
 	processed := make([]int32, 0, len(events))
 	for _, event := range events {
 		if err := m.Event(event.ID, event.EventID, event.Data, event.Timestamp); err != nil {
@@ -488,9 +491,11 @@ func (m *dbusMenu) AboutToShowGroup(ids []int32) ([]int32, []int32, *dbus.Error)
 }
 
 // 22x22 calendar icon in ARGB format (network byte order: ARGB)
-var iconNormalPixmap = generateCalendarIcon(0xFF5294E2)   // Blue header (Arc-style blue)
-var iconImminentPixmap = generateCalendarIcon(0xFFF27835) // Orange header
-var iconStalePixmap = generateCalendarIcon(0xFFCC575D)    // Red header
+var (
+	iconNormalPixmap   = generateCalendarIcon(0xFF5294E2) // Blue header (Arc-style blue)
+	iconImminentPixmap = generateCalendarIcon(0xFFF27835) // Orange header
+	iconStalePixmap    = generateCalendarIcon(0xFFCC575D) // Red header
+)
 
 func generateCalendarIcon(headerColor uint32) []byte {
 	const size = 22

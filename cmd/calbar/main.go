@@ -276,6 +276,18 @@ func (a *App) selectBackend() (ui.UI, error) {
 	backend := a.cfg.UI.Backend
 
 	switch backend {
+	case "native":
+		if !ui.NativeAvailable() {
+			return nil, fmt.Errorf("native UI requested but not available")
+		}
+		slog.Info("using native backend")
+		return ui.NewNative(ui.Config{
+			TimeRange:          a.cfg.UI.TimeRange,
+			EventEndGrace:      a.cfg.UI.EventEndGrace,
+			HoverDismissDelay:  *a.cfg.UI.HoverDismissDelay,
+			NotificationBefore: a.cfg.Notifications.Before,
+		}), nil
+
 	case "gtk":
 		if !ui.GTKAvailable() {
 			return nil, fmt.Errorf("GTK requested but not available (build with CGO and GTK libraries)")
@@ -300,7 +312,16 @@ func (a *App) selectBackend() (ui.UI, error) {
 		})
 
 	case "auto", "":
-		// Auto: prefer GTK if available, fall back to menu
+		// Auto: prefer the platform-native UI, then GTK, then menu.
+		if ui.NativeAvailable() {
+			slog.Info("auto-selected native backend")
+			return ui.NewNative(ui.Config{
+				TimeRange:          a.cfg.UI.TimeRange,
+				EventEndGrace:      a.cfg.UI.EventEndGrace,
+				HoverDismissDelay:  *a.cfg.UI.HoverDismissDelay,
+				NotificationBefore: a.cfg.Notifications.Before,
+			}), nil
+		}
 		if ui.GTKAvailable() {
 			slog.Info("auto-selected GTK backend")
 			return ui.NewGTK(ui.Config{

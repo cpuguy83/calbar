@@ -1,4 +1,4 @@
-//go:build !darwin && (!linux || nogtk || !cgo)
+//go:build darwin
 
 package main
 
@@ -10,7 +10,7 @@ import (
 	"syscall"
 )
 
-// Run starts the application without GTK.
+// Run starts the macOS application.
 func (a *App) Run() error {
 	if err := a.activate(); err != nil {
 		return fmt.Errorf("activation failed: %w", err)
@@ -30,7 +30,6 @@ func (a *App) Run() error {
 }
 
 // scheduleUIUpdate schedules a UI update.
-// Without GTK, we just update directly.
 func (a *App) scheduleUIUpdate() {
 	a.updateUI()
 }

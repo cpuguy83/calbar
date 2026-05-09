@@ -1,4 +1,4 @@
-//go:build !nogtk && cgo
+//go:build linux && !nogtk && cgo
 
 // Package gtk4layershell provides puregotk bindings for gtk4-layer-shell.
 // This is a minimal hand-written binding for the functions CalBar uses.

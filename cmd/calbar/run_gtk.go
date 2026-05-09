@@ -1,4 +1,4 @@
-//go:build !nogtk && cgo
+//go:build linux && !nogtk && cgo
 
 package main
 

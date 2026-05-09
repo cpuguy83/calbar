@@ -165,11 +165,11 @@ func (t *tokenCacheAccessor) Export(ctx context.Context, cache cache.Marshaler, 
 
 	// Ensure directory exists
 	dir := filepath.Dir(t.path)
-	if err := os.MkdirAll(dir, 0700); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
 
-	return os.WriteFile(t.path, data, 0600)
+	return os.WriteFile(t.path, data, 0o600)
 }
 
 // getCacheFilePath returns the path for the token cache file.

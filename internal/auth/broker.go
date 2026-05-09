@@ -1,3 +1,5 @@
+//go:build linux
+
 // Package auth provides authentication for Microsoft services via the identity broker.
 package auth
 
@@ -23,15 +25,6 @@ const (
 	// Broker protocol version - must be "0.0" for current broker
 	brokerProtocolVersion = "0.0"
 
-	// Edge browser client ID - works for SSO and token acquisition
-	DefaultClientID = "d7b530a4-7680-4c23-a8bf-c52c121d2e87"
-
-	// Default redirect URI for native apps
-	DefaultRedirectURI = "https://login.microsoftonline.com/common/oauth2/nativeclient"
-
-	// Default authority (used when no tenant-specific realm available)
-	DefaultAuthority = "https://login.microsoftonline.com/common"
-
 	// Authorization type for token acquisition
 	AuthTypeToken = 1
 )
@@ -41,13 +34,6 @@ var (
 	ErrNoAccounts         = errors.New("no accounts found in broker")
 	ErrAuthFailed         = errors.New("authentication failed")
 )
-
-// Token represents an OAuth2 access token.
-type Token struct {
-	AccessToken string
-	ExpiresOn   time.Time
-	AccountID   string
-}
 
 // Broker is a client for the Microsoft Identity Broker D-Bus service.
 type Broker struct {
