@@ -78,6 +78,7 @@ func (n *Native) SetHiddenEvents(events []calendar.Event) {
 	n.mu.Lock()
 	n.hiddenEvents = slices.Clone(events)
 	n.mu.Unlock()
+	n.sendHiddenEvents()
 }
 
 func (n *Native) SetStale(stale bool) {
@@ -116,29 +117,46 @@ func (n *Native) sendEvents() {
 		if event.End.Add(n.cfg.EventEndGrace).Before(now) || event.Start.After(cutoff) {
 			continue
 		}
-		items = append(items, macos.Event{
-			UID:             event.UID,
-			Summary:         event.Summary,
-			Description:     event.Description,
-			Section:         nativeEventSection(event, now),
-			TimeText:        nativeEventTimeText(event, now),
-			TimePrimary:     nativeEventTimePrimary(event, now),
-			TimeSecondary:   nativeEventTimeSecondary(event),
-			Metadata:        nativeEventMetadata(event),
-			Location:        event.Location,
-			Organizer:       event.Organizer,
-			Source:          event.Source,
-			MeetingURL:      nativeMeetingURL(event),
-			MeetingService:  event.Meeting.Service,
-			MeetingID:       event.Meeting.ID,
-			MeetingPasscode: event.Meeting.Passcode,
-			MeetingDialIn:   event.Meeting.DialIn,
-			MeetingPhoneID:  event.Meeting.PhoneConferenceID,
-			AllDay:          event.AllDay,
-			Stale:           event.Stale,
-		})
+		items = append(items, nativeEvent(event, now))
 	}
 	_ = n.frontend.Send(macos.Command{Type: "set_events", Events: items})
+}
+
+func (n *Native) sendHiddenEvents() {
+	n.mu.RLock()
+	events := slices.Clone(n.hiddenEvents)
+	n.mu.RUnlock()
+
+	now := time.Now()
+	items := make([]macos.Event, 0, len(events))
+	for _, event := range events {
+		items = append(items, nativeEvent(event, now))
+	}
+	_ = n.frontend.Send(macos.Command{Type: "set_hidden_events", HiddenEvents: items})
+}
+
+func nativeEvent(event calendar.Event, now time.Time) macos.Event {
+	return macos.Event{
+		UID:             event.UID,
+		Summary:         event.Summary,
+		Description:     event.Description,
+		Section:         nativeEventSection(event, now),
+		TimeText:        nativeEventTimeText(event, now),
+		TimePrimary:     nativeEventTimePrimary(event, now),
+		TimeSecondary:   nativeEventTimeSecondary(event),
+		Metadata:        nativeEventMetadata(event),
+		Location:        event.Location,
+		Organizer:       event.Organizer,
+		Source:          event.Source,
+		MeetingURL:      nativeMeetingURL(event),
+		MeetingService:  event.Meeting.Service,
+		MeetingID:       event.Meeting.ID,
+		MeetingPasscode: event.Meeting.Passcode,
+		MeetingDialIn:   event.Meeting.DialIn,
+		MeetingPhoneID:  event.Meeting.PhoneConferenceID,
+		AllDay:          event.AllDay,
+		Stale:           event.Stale,
+	}
 }
 
 func nativeEventSection(event calendar.Event, now time.Time) string {

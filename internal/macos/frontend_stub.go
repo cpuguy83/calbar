@@ -6,13 +6,14 @@ package macos
 import "fmt"
 
 type Command struct {
-	Type    string
-	State   string
-	Tooltip string
-	Events  []Event
-	Loading *bool
-	Stale   *bool
-	Errors  []string
+	Type         string
+	State        string
+	Tooltip      string
+	Events       []Event
+	HiddenEvents []Event
+	Loading      *bool
+	Stale        *bool
+	Errors       []string
 }
 
 type Event struct {

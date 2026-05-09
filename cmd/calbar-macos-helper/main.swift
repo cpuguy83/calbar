@@ -8,6 +8,7 @@ struct Command: Decodable {
 	let state: String?
 	let tooltip: String?
 	let events: [CalendarEvent]?
+	let hiddenEvents: [CalendarEvent]?
 	let loading: Bool?
 	let stale: Bool?
 	let errors: [String]?
@@ -57,10 +58,13 @@ final class CalendarModel: ObservableObject {
 	@Published var searchText = ""
 	@Published var searchFocusRequest = 0
 	@Published var selectedEvent: CalendarEvent?
+	@Published var hiddenEvents: [CalendarEvent] = []
+	@Published var showingHiddenEvents = false
 
 	var onOpenURL: ((String) -> Void)?
 	var onSync: (() -> Void)?
 	var onHide: ((String) -> Void)?
+	var onUnhide: ((String) -> Void)?
 	var onCopyConfigPath: (() -> Void)?
 	var onQuit: (() -> Void)?
 
@@ -100,12 +104,31 @@ final class CalendarModel: ObservableObject {
 		}
 	}
 
+	func updateHiddenEvents(_ events: [CalendarEvent]) {
+		hiddenEvents = events
+	}
+
 	func showDetails(_ event: CalendarEvent) {
+		showingHiddenEvents = false
 		selectedEvent = event
 	}
 
 	func hideDetails() {
 		selectedEvent = nil
+	}
+
+	func showHiddenEvents() {
+		selectedEvent = nil
+		showingHiddenEvents = true
+	}
+
+	func hideHiddenEvents() {
+		showingHiddenEvents = false
+	}
+
+	func resetNavigation() {
+		selectedEvent = nil
+		showingHiddenEvents = false
 	}
 
 	func updateLoading(_ loading: Bool) {
@@ -130,9 +153,23 @@ private struct EventGroup: Identifiable {
 private struct CalendarPopoverView: View {
 	@ObservedObject var model: CalendarModel
 
-	private var groups: [EventGroup] {
+	private var timedEvents: [CalendarEvent] {
+		model.filteredEvents.filter { $0.allDay != true }
+	}
+
+	private var allDayEvents: [CalendarEvent] {
+		model.filteredEvents
+			.filter { $0.allDay == true }
+			.sorted { lhs, rhs in lhs.summary.localizedCaseInsensitiveCompare(rhs.summary) == .orderedAscending }
+	}
+
+	private var timedGroups: [EventGroup] {
+		grouped(timedEvents)
+	}
+
+	private func grouped(_ events: [CalendarEvent]) -> [EventGroup] {
 		var result: [EventGroup] = []
-		for event in model.filteredEvents {
+		for event in events {
 			let title = event.sectionTitle
 			if let last = result.indices.last, result[last].title == title {
 				result[last].events.append(event)
@@ -157,6 +194,16 @@ private struct CalendarPopoverView: View {
 						}
 					)
 					.transition(.move(edge: .trailing).combined(with: .opacity))
+				} else if model.showingHiddenEvents {
+					HiddenEventsView(
+						events: model.hiddenEvents,
+						onBack: { model.hideHiddenEvents() },
+						onUnhide: { uid in
+							model.onUnhide?(uid)
+							model.hideHiddenEvents()
+						}
+					)
+					.transition(.move(edge: .trailing).combined(with: .opacity))
 				} else {
 					listView
 						.transition(.move(edge: .leading).combined(with: .opacity))
@@ -167,6 +214,7 @@ private struct CalendarPopoverView: View {
 			footer
 		}
 		.animation(.easeInOut(duration: 0.18), value: model.selectedEvent?.id)
+		.animation(.easeInOut(duration: 0.18), value: model.showingHiddenEvents)
 		.frame(width: 420, height: 560)
 	}
 
@@ -218,17 +266,39 @@ private struct CalendarPopoverView: View {
 
 	@ViewBuilder
 	private var content: some View {
-		if groups.isEmpty {
+		VStack(spacing: 0) {
+			timedContent
+				.frame(maxWidth: .infinity, maxHeight: .infinity)
+			if !allDayEvents.isEmpty {
+				Divider()
+				AllDaySection(
+					events: allDayEvents,
+					onOpenURL: { model.onOpenURL?($0) },
+					onHide: { model.onHide?($0) },
+					onShowDetails: { model.showDetails($0) }
+				)
+			}
+		}
+	}
+
+	@ViewBuilder
+	private var timedContent: some View {
+		if timedGroups.isEmpty && allDayEvents.isEmpty {
 			ContentUnavailableView(
 				model.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "No Upcoming Events" : "No Matching Events",
 				systemImage: "calendar",
 				description: Text(model.searchText.isEmpty ? "CalBar will show synced calendar events here." : "Try a different event, location, or calendar name.")
 			)
-			.frame(maxWidth: .infinity, maxHeight: .infinity)
+		} else if timedGroups.isEmpty {
+			ContentUnavailableView(
+				"No Timed Events",
+				systemImage: "weather.clear",
+				description: Text("All-day events are shown below.")
+			)
 		} else {
 			ScrollView {
 				LazyVStack(alignment: .leading, spacing: 0) {
-					ForEach(groups) { group in
+					ForEach(timedGroups) { group in
 						Section {
 							ForEach(group.events) { event in
 								EventRow(
@@ -256,6 +326,14 @@ private struct CalendarPopoverView: View {
 
 	private var footer: some View {
 		HStack(spacing: 12) {
+			if !model.hiddenEvents.isEmpty {
+				Button {
+					model.showHiddenEvents()
+				} label: {
+					Label("\(model.hiddenEvents.count) hidden", systemImage: "eye.slash")
+				}
+				.buttonStyle(.borderless)
+			}
 			Button {
 				model.onCopyConfigPath?()
 			} label: {
@@ -310,10 +388,7 @@ private struct EventRow: View {
 		.overlay(alignment: .bottom) {
 			Divider().padding(.leading, 90)
 		}
-		.contextMenu {
-			Button("Show Details") { onShowDetails() }
-			Button("Hide Event", role: .destructive) { onHide(event.uid) }
-		}
+		.onRightClick { onHide(event.uid) }
 		.accessibilityElement(children: .combine)
 		.accessibilityLabel(accessibilityLabel)
 	}
@@ -361,6 +436,166 @@ private struct EventRow: View {
 			parts.append(location)
 		}
 		return Text(parts.joined(separator: ", "))
+	}
+}
+
+private struct AllDaySection: View {
+	let events: [CalendarEvent]
+	let onOpenURL: (String) -> Void
+	let onHide: (String) -> Void
+	let onShowDetails: (CalendarEvent) -> Void
+
+	var body: some View {
+		VStack(alignment: .leading, spacing: 0) {
+			Text("ALL DAY")
+				.font(.caption2.weight(.semibold))
+				.foregroundStyle(.secondary)
+				.padding(.horizontal, 16)
+				.padding(.top, 8)
+				.padding(.bottom, 4)
+			ForEach(events) { event in
+				AllDayRow(
+					event: event,
+					onOpenURL: onOpenURL,
+					onHide: { onHide(event.uid) },
+					onShowDetails: { onShowDetails(event) }
+				)
+			}
+		}
+		.frame(maxWidth: .infinity, alignment: .leading)
+		.background(Color.primary.opacity(0.025))
+	}
+}
+
+private struct AllDayRow: View {
+	let event: CalendarEvent
+	let onOpenURL: (String) -> Void
+	let onHide: () -> Void
+	let onShowDetails: () -> Void
+
+	var body: some View {
+		HStack(alignment: .firstTextBaseline, spacing: 8) {
+			Button(action: onShowDetails) {
+				VStack(alignment: .leading, spacing: 2) {
+					Text(event.summary)
+						.font(.callout)
+						.foregroundStyle(event.stale == true ? Color.red : Color.primary)
+						.lineLimit(1)
+					if let metadata = allDayMetadata, !metadata.isEmpty {
+						Text(metadata)
+							.font(.caption2)
+							.foregroundStyle(.secondary)
+							.lineLimit(1)
+					}
+				}
+				.frame(maxWidth: .infinity, alignment: .leading)
+			}
+			.buttonStyle(.plain)
+			if let meetingURL = event.meetingURL, !meetingURL.isEmpty {
+				Button {
+					onOpenURL(meetingURL)
+				} label: {
+					Text("Join")
+				}
+				.buttonStyle(.bordered)
+				.controlSize(.small)
+			}
+		}
+		.padding(.horizontal, 16)
+		.padding(.vertical, 7)
+		.background(Color.primary.opacity(0.0001))
+		.overlay(alignment: .bottom) {
+			Divider().padding(.leading, 16)
+		}
+		.onRightClick(perform: onHide)
+		.accessibilityElement(children: .combine)
+		.accessibilityLabel(Text([event.summary, event.timeText].joined(separator: ", ")))
+	}
+
+	private var allDayMetadata: String? {
+		let value = event.metadata ?? event.source ?? ""
+		return value.isEmpty ? nil : value
+	}
+}
+
+private struct HiddenEventsView: View {
+	let events: [CalendarEvent]
+	let onBack: () -> Void
+	let onUnhide: (String) -> Void
+
+	var body: some View {
+		VStack(spacing: 0) {
+			header
+			Divider()
+			if events.isEmpty {
+				ContentUnavailableView("No Hidden Events", systemImage: "eye.slash")
+					.frame(maxWidth: .infinity, maxHeight: .infinity)
+			} else {
+				ScrollView {
+					LazyVStack(alignment: .leading, spacing: 0) {
+						Text("Click an event to unhide it")
+							.font(.caption)
+							.foregroundStyle(.secondary)
+							.padding(.horizontal, 16)
+							.padding(.vertical, 10)
+						ForEach(events) { event in
+							HiddenEventRow(event: event) {
+								onUnhide(event.uid)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	private var header: some View {
+		HStack(spacing: 8) {
+			Button(action: onBack) {
+				Label("Back", systemImage: "chevron.left")
+					.labelStyle(.iconOnly)
+			}
+			.buttonStyle(.borderless)
+			.help("Back")
+			Text("Hidden Events")
+				.font(.headline)
+			Spacer()
+		}
+		.padding(.horizontal, 12)
+		.padding(.vertical, 10)
+	}
+}
+
+private struct HiddenEventRow: View {
+	let event: CalendarEvent
+	let onUnhide: () -> Void
+
+	var body: some View {
+		Button(action: onUnhide) {
+			HStack(alignment: .center, spacing: 10) {
+				VStack(alignment: .leading, spacing: 3) {
+					Text(event.summary)
+						.font(.body)
+						.foregroundStyle(event.stale == true ? Color.red : Color.primary)
+						.lineLimit(2)
+					Text(event.timeText)
+						.font(.caption)
+						.foregroundStyle(.secondary)
+						.lineLimit(1)
+				}
+				Spacer(minLength: 8)
+				Image(systemName: "eye")
+					.foregroundStyle(.secondary)
+			}
+			.frame(maxWidth: .infinity, alignment: .leading)
+			.padding(.horizontal, 16)
+			.padding(.vertical, 10)
+			.background(Color.primary.opacity(0.0001))
+			.overlay(alignment: .bottom) {
+				Divider().padding(.leading, 16)
+			}
+		}
+		.buttonStyle(.plain)
 	}
 }
 
@@ -549,6 +784,44 @@ private struct SearchField: NSViewRepresentable {
 	}
 }
 
+private struct RightClickHandler: NSViewRepresentable {
+	let action: () -> Void
+
+	func makeNSView(context: Context) -> RightClickNSView {
+		let view = RightClickNSView()
+		view.action = action
+		return view
+	}
+
+	func updateNSView(_ view: RightClickNSView, context: Context) {
+		view.action = action
+	}
+}
+
+private final class RightClickNSView: NSView {
+	var action: (() -> Void)?
+
+	override func hitTest(_ point: NSPoint) -> NSView? {
+		guard let currentEvent = window?.currentEvent else { return nil }
+		switch currentEvent.type {
+		case .rightMouseDown, .rightMouseUp:
+			return self
+		default:
+			return nil
+		}
+	}
+
+	override func rightMouseUp(with event: NSEvent) {
+		action?()
+	}
+}
+
+private extension View {
+	func onRightClick(perform action: @escaping () -> Void) -> some View {
+		overlay(RightClickHandler(action: action).frame(maxWidth: .infinity, maxHeight: .infinity))
+	}
+}
+
 private extension CalendarEvent {
 	var sectionTitle: String {
 		if let section, !section.isEmpty {
@@ -590,6 +863,7 @@ final class HelperApp: NSObject, NSApplicationDelegate {
 		model.onOpenURL = { [weak self] url in self?.send(HelperEvent(type: "open_url", url: url)) }
 		model.onSync = { [weak self] in self?.send(HelperEvent(type: "sync")) }
 		model.onHide = { [weak self] uid in self?.send(HelperEvent(type: "hide_event", uid: uid)) }
+		model.onUnhide = { [weak self] uid in self?.send(HelperEvent(type: "unhide_event", uid: uid)) }
 		model.onCopyConfigPath = { [weak self] in self?.send(HelperEvent(type: "copy_config_path")) }
 		model.onQuit = { [weak self] in self?.send(HelperEvent(type: "quit")) }
 
@@ -600,6 +874,8 @@ final class HelperApp: NSObject, NSApplicationDelegate {
 			guard event.keyCode == 53, self?.popover.isShown == true else { return event }
 			if self?.model.selectedEvent != nil {
 				self?.model.hideDetails()
+			} else if self?.model.showingHiddenEvents == true {
+				self?.model.hideHiddenEvents()
 			} else {
 				self?.popover.performClose(nil)
 			}
@@ -676,18 +952,18 @@ final class HelperApp: NSObject, NSApplicationDelegate {
 		case "show":
 			showPopover()
 		case "hide":
-			model.hideDetails()
+			model.resetNavigation()
 			popover.performClose(nil)
 		case "toggle":
 			if popover.isShown {
-				model.hideDetails()
+				model.resetNavigation()
 				popover.performClose(nil)
 			} else {
 				showPopover()
 			}
 		case "search":
 			showPopover()
-			model.hideDetails()
+			model.resetNavigation()
 			model.requestSearchFocus()
 		case "set_tray_state":
 			setTrayState(command.state ?? "normal")
@@ -695,6 +971,8 @@ final class HelperApp: NSObject, NSApplicationDelegate {
 			statusItem.button?.toolTip = command.tooltip ?? "CalBar"
 		case "set_events":
 			model.updateEvents(command.events ?? [])
+		case "set_hidden_events":
+			model.updateHiddenEvents(command.hiddenEvents ?? [])
 		case "set_loading":
 			model.updateLoading(command.loading ?? false)
 		case "set_stale":
@@ -708,7 +986,7 @@ final class HelperApp: NSObject, NSApplicationDelegate {
 
 	private func showPopover() {
 		guard let button = statusItem.button else { return }
-		model.hideDetails()
+		model.resetNavigation()
 		if popover.isShown { return }
 		popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
 		NSApp.activate()

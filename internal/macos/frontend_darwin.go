@@ -18,13 +18,14 @@ import (
 const helperEnv = "CALBAR_MACOS_HELPER"
 
 type Command struct {
-	Type    string   `json:"type"`
-	State   string   `json:"state,omitempty"`
-	Tooltip string   `json:"tooltip,omitempty"`
-	Events  []Event  `json:"events,omitempty"`
-	Loading *bool    `json:"loading,omitempty"`
-	Stale   *bool    `json:"stale,omitempty"`
-	Errors  []string `json:"errors,omitempty"`
+	Type         string   `json:"type"`
+	State        string   `json:"state,omitempty"`
+	Tooltip      string   `json:"tooltip,omitempty"`
+	Events       []Event  `json:"events,omitempty"`
+	HiddenEvents []Event  `json:"hiddenEvents,omitempty"`
+	Loading      *bool    `json:"loading,omitempty"`
+	Stale        *bool    `json:"stale,omitempty"`
+	Errors       []string `json:"errors,omitempty"`
 }
 
 type Event struct {
