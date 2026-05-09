@@ -149,7 +149,7 @@ private struct CalendarPopoverView: View {
 					.font(.headline)
 				Text(model.statusText)
 					.font(.caption)
-					.foregroundStyle(model.errors.isEmpty ? .secondary : .red)
+					.foregroundStyle(model.errors.isEmpty ? Color.secondary : Color.red)
 					.lineLimit(1)
 			}
 			Spacer(minLength: 12)
