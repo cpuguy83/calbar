@@ -102,8 +102,8 @@ final class CalendarViewController: NSViewController, NSSearchFieldDelegate {
         let content = NSStackView()
         content.orientation = .vertical
         content.alignment = .leading
-        content.spacing = 12
-        content.edgeInsets = NSEdgeInsets(top: 16, left: 16, bottom: 14, right: 16)
+        content.spacing = 10
+        content.edgeInsets = NSEdgeInsets(top: 14, left: 14, bottom: 14, right: 14)
         content.translatesAutoresizingMaskIntoConstraints = false
 
         let header = NSStackView()
@@ -111,7 +111,7 @@ final class CalendarViewController: NSViewController, NSSearchFieldDelegate {
         header.alignment = .centerY
         header.spacing = 8
 
-        let title = NSTextField(labelWithString: "Today")
+        let title = NSTextField(labelWithString: "CalBar")
         title.font = NSFont.systemFont(ofSize: 18, weight: .semibold)
 
         let titleStack = NSStackView()
@@ -146,7 +146,7 @@ final class CalendarViewController: NSViewController, NSSearchFieldDelegate {
 
         eventsStack.orientation = .vertical
         eventsStack.alignment = .leading
-        eventsStack.spacing = 9
+        eventsStack.spacing = 0
         eventsStack.edgeInsets = NSEdgeInsets(top: 2, left: 0, bottom: 2, right: 0)
         eventsStack.translatesAutoresizingMaskIntoConstraints = false
 
@@ -179,7 +179,7 @@ final class CalendarViewController: NSViewController, NSSearchFieldDelegate {
             header.widthAnchor.constraint(equalTo: content.widthAnchor, constant: -28),
             searchField.widthAnchor.constraint(equalTo: content.widthAnchor, constant: -28),
             scrollView.widthAnchor.constraint(equalTo: content.widthAnchor, constant: -28),
-            scrollView.heightAnchor.constraint(equalToConstant: 410),
+            scrollView.heightAnchor.constraint(equalToConstant: 380),
             footer.widthAnchor.constraint(equalTo: content.widthAnchor, constant: -28),
             eventsStack.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor)
         ])
@@ -284,20 +284,13 @@ final class CalendarViewController: NSViewController, NSSearchFieldDelegate {
         let label = NSTextField(labelWithString: title.uppercased())
         label.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
         label.textColor = .secondaryLabelColor
-        label.translatesAutoresizingMaskIntoConstraints = false
-
-        let line = NSBox()
-        line.boxType = .separator
-        line.translatesAutoresizingMaskIntoConstraints = false
 
         let stack = NSStackView()
-        stack.orientation = .horizontal
-        stack.alignment = .centerY
-        stack.spacing = 8
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.edgeInsets = NSEdgeInsets(top: 10, left: 0, bottom: 4, right: 0)
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(label)
-        stack.addArrangedSubview(line)
-        line.heightAnchor.constraint(equalToConstant: 1).isActive = true
         return stack
     }
 
@@ -306,14 +299,14 @@ final class CalendarViewController: NSViewController, NSSearchFieldDelegate {
         row.orientation = .horizontal
         row.alignment = .top
         row.spacing = 10
-        row.edgeInsets = NSEdgeInsets(top: 9, left: 10, bottom: 9, right: 10)
+        row.edgeInsets = NSEdgeInsets(top: 8, left: 0, bottom: 8, right: 0)
 
-        let timeBadge = makeTimeBadge(event)
+        let timeColumn = makeTimeColumn(event)
 
         let details = NSStackView()
         details.orientation = .vertical
         details.alignment = .leading
-        details.spacing = 4
+        details.spacing = 3
 
         let titleLine = NSStackView()
         titleLine.orientation = .horizontal
@@ -321,26 +314,25 @@ final class CalendarViewController: NSViewController, NSSearchFieldDelegate {
         titleLine.spacing = 7
 
         let title = NSTextField(labelWithString: event.summary)
-        title.font = NSFont.systemFont(ofSize: 13, weight: .medium)
+        title.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
         title.lineBreakMode = .byTruncatingTail
         title.maximumNumberOfLines = 2
 
-        if event.stale == true {
-            titleLine.addArrangedSubview(pillLabel("Stale", color: .systemRed))
-        }
-        if event.allDay == true {
-            titleLine.addArrangedSubview(pillLabel("All Day", color: .systemBlue))
-        }
-
         titleLine.addArrangedSubview(title)
+        if event.stale == true {
+            let stale = NSTextField(labelWithString: "Stale")
+            stale.font = NSFont.systemFont(ofSize: 11, weight: .medium)
+            stale.textColor = .systemRed
+            titleLine.addArrangedSubview(stale)
+        }
 
-        let metadata = NSTextField(labelWithString: metadataText(for: event))
-        metadata.font = NSFont.systemFont(ofSize: 12)
-        metadata.textColor = .secondaryLabelColor
-        metadata.lineBreakMode = .byTruncatingTail
+        let time = NSTextField(labelWithString: event.timeText)
+        time.font = NSFont.systemFont(ofSize: 12)
+        time.textColor = .secondaryLabelColor
+        time.lineBreakMode = .byTruncatingTail
 
         details.addArrangedSubview(titleLine)
-        details.addArrangedSubview(metadata)
+        details.addArrangedSubview(time)
 
         if let location = event.location, !location.isEmpty {
             let locationLabel = NSTextField(labelWithString: location)
@@ -355,104 +347,50 @@ final class CalendarViewController: NSViewController, NSSearchFieldDelegate {
         actions.spacing = 6
 
         if let meetingURL = event.meetingURL, !meetingURL.isEmpty {
-            actions.addArrangedSubview(ActionButton(title: "Join", style: .primary) { [weak self] in self?.onOpenURL?(meetingURL) })
+            actions.addArrangedSubview(ActionButton(title: "Join") { [weak self] in self?.onOpenURL?(meetingURL) })
         }
         actions.addArrangedSubview(ActionButton(title: "Hide", style: .quiet) { [weak self] in self?.onHide?(event.uid) })
         details.addArrangedSubview(actions)
 
-        row.addArrangedSubview(timeBadge)
+        row.addArrangedSubview(timeColumn)
         row.addArrangedSubview(details)
-
-        let box = NSView()
-        box.wantsLayer = true
-        box.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.45).cgColor
-        box.layer?.borderWidth = 1
-        box.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.65).cgColor
-        box.layer?.cornerRadius = 10
-        box.translatesAutoresizingMaskIntoConstraints = false
         row.translatesAutoresizingMaskIntoConstraints = false
-        box.addSubview(row)
-        NSLayoutConstraint.activate([
-            timeBadge.widthAnchor.constraint(equalToConstant: 58),
-            row.leadingAnchor.constraint(equalTo: box.leadingAnchor),
-            row.trailingAnchor.constraint(equalTo: box.trailingAnchor),
-            row.topAnchor.constraint(equalTo: box.topAnchor),
-            row.bottomAnchor.constraint(equalTo: box.bottomAnchor)
-        ])
-        return box
+        timeColumn.widthAnchor.constraint(equalToConstant: 72).isActive = true
+        return row
     }
 
-    private func makeTimeBadge(_ event: CalendarEvent) -> NSView {
+    private func makeTimeColumn(_ event: CalendarEvent) -> NSView {
         let stack = NSStackView()
         stack.orientation = .vertical
-        stack.alignment = .centerX
+        stack.alignment = .trailing
         stack.spacing = 1
 
         let pieces = timePieces(for: event)
         let primary = NSTextField(labelWithString: pieces.primary)
-        primary.font = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
-        primary.alignment = .center
+        primary.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+        primary.textColor = .secondaryLabelColor
+        primary.alignment = .right
 
         let secondary = NSTextField(labelWithString: pieces.secondary)
-        secondary.font = NSFont.systemFont(ofSize: 10, weight: .medium)
-        secondary.textColor = .secondaryLabelColor
-        secondary.alignment = .center
+        secondary.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        secondary.textColor = .tertiaryLabelColor
+        secondary.alignment = .right
 
         stack.addArrangedSubview(primary)
         if !pieces.secondary.isEmpty {
             stack.addArrangedSubview(secondary)
         }
-
-        let box = NSView()
-        box.wantsLayer = true
-        box.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.12).cgColor
-        box.layer?.cornerRadius = 8
-        box.translatesAutoresizingMaskIntoConstraints = false
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        box.addSubview(stack)
-        NSLayoutConstraint.activate([
-            box.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
-            stack.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 6),
-            stack.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -6),
-            stack.centerYAnchor.constraint(equalTo: box.centerYAnchor)
-        ])
-        return box
+        return stack
     }
 
     private func timePieces(for event: CalendarEvent) -> (primary: String, secondary: String) {
+        if event.allDay == true {
+            return ("All day", "")
+        }
         if let primary = event.timePrimary, !primary.isEmpty {
             return (primary, event.timeSecondary ?? "")
         }
         return (event.timeText, "")
-    }
-
-    private func metadataText(for event: CalendarEvent) -> String {
-        if let metadata = event.metadata, !metadata.isEmpty {
-            return metadata
-        }
-        return event.timeText
-    }
-
-    private func pillLabel(_ text: String, color: NSColor) -> NSView {
-        let label = NSTextField(labelWithString: text)
-        label.font = NSFont.systemFont(ofSize: 10, weight: .semibold)
-        label.textColor = color
-        label.alignment = .center
-        label.translatesAutoresizingMaskIntoConstraints = false
-
-        let box = NSView()
-        box.wantsLayer = true
-        box.layer?.backgroundColor = color.withAlphaComponent(0.12).cgColor
-        box.layer?.cornerRadius = 5
-        box.translatesAutoresizingMaskIntoConstraints = false
-        box.addSubview(label)
-        NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 5),
-            label.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -5),
-            label.topAnchor.constraint(equalTo: box.topAnchor, constant: 2),
-            label.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -2)
-        ])
-        return box
     }
 }
 
@@ -473,7 +411,7 @@ final class HelperApp: NSObject, NSApplicationDelegate {
         viewController.onQuit = { [weak self] in self?.send(HelperEvent(type: "quit")) }
 
         popover.behavior = .transient
-        popover.contentSize = NSSize(width: 380, height: 520)
+        popover.contentSize = NSSize(width: 380, height: 490)
         popover.contentViewController = viewController
 
         if let button = statusItem.button {
