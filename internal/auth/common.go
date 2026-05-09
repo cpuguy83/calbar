@@ -3,8 +3,15 @@ package auth
 import "time"
 
 const (
-	// DefaultClientID is the Edge browser client ID, used for SSO and token acquisition.
-	DefaultClientID = "d7b530a4-7680-4c23-a8bf-c52c121d2e87"
+	// DefaultBrokerClientID is the Edge browser client ID, used with Microsoft Identity Broker SSO.
+	DefaultBrokerClientID = "d7b530a4-7680-4c23-a8bf-c52c121d2e87"
+
+	// DefaultBrowserClientID is the Microsoft Graph PowerShell public client ID.
+	// Its app registration supports loopback redirects used by MSAL browser auth.
+	DefaultBrowserClientID = "14d82eec-204b-4c2f-b7e8-296a70dab67e"
+
+	// DefaultClientID is kept as the broker default for existing internal callers.
+	DefaultClientID = DefaultBrokerClientID
 
 	// DefaultRedirectURI is the native-app redirect URI used by Microsoft broker requests.
 	DefaultRedirectURI = "https://login.microsoftonline.com/common/oauth2/nativeclient"

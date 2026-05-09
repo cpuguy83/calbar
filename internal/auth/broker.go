@@ -50,7 +50,7 @@ type Broker struct {
 // NewBroker creates a new broker client.
 func NewBroker(clientID string, scopes []string) *Broker {
 	if clientID == "" {
-		clientID = DefaultClientID
+		clientID = DefaultBrokerClientID
 	}
 	return &Broker{
 		clientID:  clientID,

@@ -255,7 +255,7 @@ For ICS export:
 For native MS365 integration:
 1. Add to config as an `ms365` type source
 2. On Linux, CalBar tries Microsoft Identity Broker first
-3. If the broker is unavailable, CalBar opens the browser for MSAL interactive auth and reuses the MSAL token cache afterward
+3. If the broker is unavailable, CalBar opens the browser using a Microsoft Graph public client that supports localhost loopback redirects and reuses the MSAL token cache afterward
 
 ### Google Calendar
 

@@ -29,7 +29,7 @@ type BrowserAuth struct {
 // NewBrowserAuth creates a new interactive browser auth client.
 func NewBrowserAuth(clientID string, scopes []string) (*BrowserAuth, error) {
 	if clientID == "" {
-		clientID = DefaultClientID
+		clientID = DefaultBrowserClientID
 	}
 
 	// Set up cache file
