@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -32,6 +33,15 @@ var sourceFetchTimeout = 2 * time.Minute
 type SourceFailure struct {
 	Name string
 	Err  error
+}
+
+// SourceResult describes one source result during a sync.
+type SourceResult struct {
+	Name     string
+	Events   []calendar.Event
+	Fetched  int
+	Filtered int
+	Err      error
 }
 
 // Error returns a user-visible failure message.
@@ -72,21 +82,19 @@ func (s *Syncer) SourceCount() int {
 // Sync fetches all sources, applies per-source filters, and returns merged events.
 // Also returns any sources that failed to sync.
 func (s *Syncer) Sync(ctx context.Context) ([]calendar.Event, []SourceFailure, error) {
+	return s.SyncWithProgress(ctx, nil)
+}
+
+// SyncWithProgress fetches all sources and calls onSourceResult as each source completes.
+// The final return value is the merged result from all completed sources.
+func (s *Syncer) SyncWithProgress(ctx context.Context, onSourceResult func(SourceResult)) ([]calendar.Event, []SourceFailure, error) {
 	slog.Info("starting sync", "sources", len(s.sources))
 
 	// Calculate end time from configured time range
 	endTime := time.Now().Add(s.timeRange)
 
-	// Fetch from all sources in parallel, applying per-source filters
-	type result struct {
-		events   []calendar.Event
-		name     string
-		fetched  int // count before filtering
-		filtered int // count after filtering
-		err      error
-	}
-
-	results := make(chan result, len(s.sources))
+	// Fetch from all sources in parallel, applying per-source filters.
+	results := make(chan SourceResult, len(s.sources))
 	var wg sync.WaitGroup
 
 	for _, swf := range s.sources {
@@ -99,7 +107,7 @@ func (s *Syncer) Sync(ctx context.Context) ([]calendar.Event, []SourceFailure, e
 
 			events, err := swf.source.Fetch(sourceCtx, endTime)
 			if err != nil {
-				results <- result{name: name, err: err}
+				results <- SourceResult{Name: name, Err: err}
 				return
 			}
 
@@ -110,12 +118,12 @@ func (s *Syncer) Sync(ctx context.Context) ([]calendar.Event, []SourceFailure, e
 				events = swf.filter.Apply(events)
 			}
 
-			results <- result{
-				events:   events,
-				name:     name,
-				fetched:  fetched,
-				filtered: len(events),
-				err:      nil,
+			results <- SourceResult{
+				Name:     name,
+				Events:   events,
+				Fetched:  fetched,
+				Filtered: len(events),
+				Err:      nil,
 			}
 		})
 	}
@@ -131,16 +139,22 @@ func (s *Syncer) Sync(ctx context.Context) ([]calendar.Event, []SourceFailure, e
 	var failures []SourceFailure
 	var firstErr error
 	for r := range results {
-		if r.err != nil {
-			slog.Warn("failed to fetch source", "name", r.name, "error", r.err)
-			failures = append(failures, SourceFailure{Name: r.name, Err: r.err})
+		if onSourceResult != nil {
+			callbackResult := r
+			callbackResult.Events = slices.Clone(r.Events)
+			onSourceResult(callbackResult)
+		}
+
+		if r.Err != nil {
+			slog.Warn("failed to fetch source", "name", r.Name, "error", r.Err)
+			failures = append(failures, SourceFailure{Name: r.Name, Err: r.Err})
 			if firstErr == nil {
-				firstErr = r.err
+				firstErr = r.Err
 			}
 			continue
 		}
-		slog.Info("fetched source", "name", r.name, "fetched", r.fetched, "after_filter", r.filtered)
-		allEvents = append(allEvents, r.events...)
+		slog.Info("fetched source", "name", r.Name, "fetched", r.Fetched, "after_filter", r.Filtered)
+		allEvents = append(allEvents, r.Events...)
 	}
 
 	// Merge and sort

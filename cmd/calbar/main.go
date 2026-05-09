@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strings"
 	gosync "sync"
 	"time"
 
@@ -644,9 +645,44 @@ func (a *App) triggerSync() {
 	}
 
 	go func() {
-		events, failures, err := a.syncer.Sync(a.ctx)
+		events, failures, err := a.syncer.SyncWithProgress(a.ctx, a.onSourceSync)
 		a.onSyncComplete(events, failures, err)
 	}()
+}
+
+func sourceNameMatches(eventSource, sourceName string) bool {
+	return eventSource == sourceName || strings.HasPrefix(eventSource, sourceName+"/")
+}
+
+func sourceFailed(eventSource string, failedSet map[string]bool) bool {
+	for sourceName := range failedSet {
+		if sourceNameMatches(eventSource, sourceName) {
+			return true
+		}
+	}
+	return false
+}
+
+// onSourceSync publishes each successful source as soon as it finishes so one
+// slow auth flow cannot hide unrelated source results until the whole sync ends.
+func (a *App) onSourceSync(result sync.SourceResult) {
+	if result.Err != nil {
+		return
+	}
+
+	events := slices.Clone(result.Events)
+	for i := range events {
+		events[i].Stale = false
+	}
+
+	a.mu.Lock()
+	a.events = slices.DeleteFunc(a.events, func(e calendar.Event) bool {
+		return sourceNameMatches(e.Source, result.Name)
+	})
+	a.events = calendar.Merge(a.events, events)
+	a.mu.Unlock()
+
+	a.scheduleUIUpdate()
 }
 
 func formatSyncFailures(failures []sync.SourceFailure, err error) []string {
@@ -685,7 +721,7 @@ func (a *App) onSyncComplete(events []calendar.Event, failures []sync.SourceFail
 		// Keep old events from failed sources, marking them as stale
 		var merged []calendar.Event
 		for _, e := range a.events {
-			if failedSet[e.Source] {
+			if sourceFailed(e.Source, failedSet) {
 				e.Stale = true
 				merged = append(merged, e)
 			}
@@ -722,11 +758,13 @@ func (a *App) updateUI() {
 	lastSync := a.lastSync
 	lastSyncErr := a.lastSyncErr
 	syncErrors := slices.Clone(a.syncErrors)
+	syncing := a.syncing
 	a.mu.RUnlock()
 
 	// Update UI with events
 	a.ui.SetEvents(events)
 	a.ui.SetHiddenEvents(hidden)
+	a.ui.SetLoading(syncing)
 
 	// Update stale state
 	isStale := len(syncErrors) > 0 || lastSyncErr != nil || time.Since(lastSync) > 2*a.syncer.Interval()
