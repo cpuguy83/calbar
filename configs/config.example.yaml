@@ -82,8 +82,8 @@ sources:
   #       - field: title
   #         contains: "standup"
   
-  # Microsoft 365 via Microsoft Identity Broker (Linux SSO)
-  # Uses your existing browser session - no manual auth needed
+  # Microsoft 365 via Linux broker or browser auth fallback
+  # Uses broker SSO when available, otherwise opens a browser and caches tokens
   # - name: "Work (MS365)"
   #   type: ms365
 

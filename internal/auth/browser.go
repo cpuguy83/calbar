@@ -14,9 +14,9 @@ import (
 	"github.com/AzureAD/microsoft-authentication-library-for-go/apps/public"
 )
 
-// DeviceCodeAuth provides authentication via device code flow.
+// BrowserAuth provides authentication via MSAL interactive browser auth.
 // This is used as a fallback when the broker is not available.
-type DeviceCodeAuth struct {
+type BrowserAuth struct {
 	client   public.Client
 	clientID string
 	scopes   []string
@@ -26,8 +26,8 @@ type DeviceCodeAuth struct {
 	account     public.Account
 }
 
-// NewDeviceCodeAuth creates a new device code auth client.
-func NewDeviceCodeAuth(clientID string, scopes []string) (*DeviceCodeAuth, error) {
+// NewBrowserAuth creates a new interactive browser auth client.
+func NewBrowserAuth(clientID string, scopes []string) (*BrowserAuth, error) {
 	if clientID == "" {
 		clientID = DefaultClientID
 	}
@@ -51,7 +51,7 @@ func NewDeviceCodeAuth(clientID string, scopes []string) (*DeviceCodeAuth, error
 		return nil, fmt.Errorf("create MSAL client: %w", err)
 	}
 
-	return &DeviceCodeAuth{
+	return &BrowserAuth{
 		client:   client,
 		clientID: clientID,
 		scopes:   scopes,
@@ -59,75 +59,55 @@ func NewDeviceCodeAuth(clientID string, scopes []string) (*DeviceCodeAuth, error
 }
 
 // GetToken acquires an access token, using cached token if valid.
-func (d *DeviceCodeAuth) GetToken(ctx context.Context) (*Token, error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
+func (b *BrowserAuth) GetToken(ctx context.Context) (*Token, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 
 	// Return cached token if still valid
-	if d.cachedToken != nil && time.Now().Add(5*time.Minute).Before(d.cachedToken.ExpiresOn) {
-		return d.cachedToken, nil
+	if b.cachedToken != nil && time.Now().Add(5*time.Minute).Before(b.cachedToken.ExpiresOn) {
+		return b.cachedToken, nil
 	}
 
 	// Try to get accounts from cache
-	accounts, err := d.client.Accounts(ctx)
+	accounts, err := b.client.Accounts(ctx)
 	if err != nil {
 		slog.Debug("could not get cached accounts", "error", err)
 	}
 
 	// Try silent auth with cached accounts
 	for _, acct := range accounts {
-		result, err := d.client.AcquireTokenSilent(ctx, d.scopes, public.WithSilentAccount(acct))
+		result, err := b.client.AcquireTokenSilent(ctx, b.scopes, public.WithSilentAccount(acct))
 		if err == nil {
-			d.account = acct
-			d.cachedToken = &Token{
+			b.account = acct
+			b.cachedToken = &Token{
 				AccessToken: result.AccessToken,
 				ExpiresOn:   result.ExpiresOn,
 				AccountID:   acct.HomeAccountID,
 			}
-			return d.cachedToken, nil
+			return b.cachedToken, nil
 		}
 		slog.Debug("silent auth failed for account", "account", acct.PreferredUsername, "error", err)
 	}
 
-	// Fall back to device code flow
-	slog.Info("no cached credentials, starting device code flow")
-	token, err := d.acquireTokenWithDeviceCode(ctx)
+	// Fall back to interactive browser auth.
+	slog.Info("no cached credentials, starting interactive browser auth")
+	token, err := b.acquireTokenInteractive(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	d.cachedToken = token
+	b.cachedToken = token
 	return token, nil
 }
 
-// acquireTokenWithDeviceCode performs the device code flow.
-func (d *DeviceCodeAuth) acquireTokenWithDeviceCode(ctx context.Context) (*Token, error) {
-	dc, err := d.client.AcquireTokenByDeviceCode(ctx, d.scopes)
+// acquireTokenInteractive performs browser-based interactive auth.
+func (b *BrowserAuth) acquireTokenInteractive(ctx context.Context) (*Token, error) {
+	result, err := b.client.AcquireTokenInteractive(ctx, b.scopes)
 	if err != nil {
-		return nil, fmt.Errorf("start device code flow: %w", err)
+		return nil, fmt.Errorf("interactive browser auth: %w", err)
 	}
 
-	// Print instructions for user
-	fmt.Fprintf(os.Stderr, "\n"+
-		"To sign in, use a web browser to open the page %s\n"+
-		"and enter the code %s to authenticate.\n\n",
-		dc.Result.VerificationURL,
-		dc.Result.UserCode)
-
-	// Wait for authentication
-	result, err := dc.AuthenticationResult(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("device code auth: %w", err)
-	}
-
-	// Get the account for future silent auth
-	accounts, _ := d.client.Accounts(ctx)
-	for _, acct := range accounts {
-		if acct.HomeAccountID == result.Account.HomeAccountID {
-			d.account = acct
-			break
-		}
-	}
+	b.account = result.Account
 
 	return &Token{
 		AccessToken: result.AccessToken,
@@ -136,8 +116,8 @@ func (d *DeviceCodeAuth) acquireTokenWithDeviceCode(ctx context.Context) (*Token
 	}, nil
 }
 
-// Close is a no-op for device code auth.
-func (d *DeviceCodeAuth) Close() error {
+// Close is a no-op for browser auth.
+func (b *BrowserAuth) Close() error {
 	return nil
 }
 

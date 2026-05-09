@@ -131,7 +131,7 @@ sources:
   #   username: "apple-id@example.com"
   #   password_cmd: "pass show icloud/app-password"
 
-  # Microsoft 365 via Microsoft Identity Broker (Linux SSO)
+  # Microsoft 365 via Linux broker or browser auth fallback
   - name: "Work (MS365)"
     type: ms365
 
@@ -252,9 +252,10 @@ For ICS export:
 2. Publish your calendar and copy the ICS link
 3. Add to config as an `ics` type source
 
-For native MS365 integration (uses Linux SSO via Microsoft Identity Broker):
+For native MS365 integration:
 1. Add to config as an `ms365` type source
-2. Requires Edge browser signed in to your Microsoft account
+2. On Linux, CalBar tries Microsoft Identity Broker first
+3. If the broker is unavailable, CalBar opens the browser for MSAL interactive auth and reuses the MSAL token cache afterward
 
 ### Google Calendar
 

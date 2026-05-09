@@ -48,7 +48,7 @@ All GTK-enabled files must have the `!nogtk && cgo` build tag.
 | `internal/tray` | StatusNotifierItem D-Bus tray icon with pixel-rendered icons |
 | `internal/notify` | Desktop notifications via D-Bus |
 | `internal/links` | Meeting URL detection (Zoom, Teams, Meet, Webex) |
-| `internal/auth` | Microsoft Identity Broker D-Bus auth + MSAL device code fallback |
+| `internal/auth` | Microsoft Identity Broker D-Bus auth + MSAL browser auth fallback |
 
 ## Critical Pattern: stableCallback
 

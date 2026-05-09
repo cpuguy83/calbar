@@ -49,7 +49,7 @@ func NewMS365Source(name string) *MS365Source {
 }
 
 // initAuth initializes the authentication provider.
-// Tries broker first, falls back to device code flow.
+// Tries broker first, falls back to interactive browser auth.
 func (s *MS365Source) initAuth(ctx context.Context) error {
 	s.initOnce.Do(func() {
 		scopes := []string{calendarReadScope}
@@ -62,14 +62,14 @@ func (s *MS365Source) initAuth(ctx context.Context) error {
 			return
 		}
 
-		// Fall back to device code flow
-		slog.Info("broker not available, using device code flow")
-		deviceCode, err := auth.NewDeviceCodeAuth("", scopes)
+		// Fall back to interactive browser auth.
+		slog.Info("broker not available, using interactive browser auth")
+		browserAuth, err := auth.NewBrowserAuth("", scopes)
 		if err != nil {
-			s.initErr = fmt.Errorf("initialize device code auth: %w", err)
+			s.initErr = fmt.Errorf("initialize browser auth: %w", err)
 			return
 		}
-		s.auth = deviceCode
+		s.auth = browserAuth
 	})
 	return s.initErr
 }

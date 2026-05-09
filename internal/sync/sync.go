@@ -26,6 +26,8 @@ type Syncer struct {
 	timeRange time.Duration
 }
 
+var sourceFetchTimeout = 2 * time.Minute
+
 // SourceFailure describes a source that failed during sync.
 type SourceFailure struct {
 	Name string
@@ -92,7 +94,10 @@ func (s *Syncer) Sync(ctx context.Context) ([]calendar.Event, []SourceFailure, e
 			name := swf.source.Name()
 			slog.Debug("fetching source", "name", name)
 
-			events, err := swf.source.Fetch(ctx, endTime)
+			sourceCtx, cancel := context.WithTimeout(ctx, sourceFetchTimeout)
+			defer cancel()
+
+			events, err := swf.source.Fetch(sourceCtx, endTime)
 			if err != nil {
 				results <- result{name: name, err: err}
 				return
