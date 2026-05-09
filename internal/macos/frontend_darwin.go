@@ -28,18 +28,25 @@ type Command struct {
 }
 
 type Event struct {
-	UID           string `json:"uid"`
-	Summary       string `json:"summary"`
-	Section       string `json:"section,omitempty"`
-	TimeText      string `json:"timeText"`
-	TimePrimary   string `json:"timePrimary,omitempty"`
-	TimeSecondary string `json:"timeSecondary,omitempty"`
-	Metadata      string `json:"metadata,omitempty"`
-	Location      string `json:"location,omitempty"`
-	Source        string `json:"source,omitempty"`
-	MeetingURL    string `json:"meetingURL,omitempty"`
-	AllDay        bool   `json:"allDay,omitempty"`
-	Stale         bool   `json:"stale,omitempty"`
+	UID             string `json:"uid"`
+	Summary         string `json:"summary"`
+	Description     string `json:"description,omitempty"`
+	Section         string `json:"section,omitempty"`
+	TimeText        string `json:"timeText"`
+	TimePrimary     string `json:"timePrimary,omitempty"`
+	TimeSecondary   string `json:"timeSecondary,omitempty"`
+	Metadata        string `json:"metadata,omitempty"`
+	Location        string `json:"location,omitempty"`
+	Organizer       string `json:"organizer,omitempty"`
+	Source          string `json:"source,omitempty"`
+	EventURL        string `json:"eventURL,omitempty"`
+	MeetingURL      string `json:"meetingURL,omitempty"`
+	MeetingService  string `json:"meetingService,omitempty"`
+	MeetingID       string `json:"meetingID,omitempty"`
+	MeetingPasscode string `json:"meetingPasscode,omitempty"`
+	MeetingDialIn   string `json:"meetingDialIn,omitempty"`
+	AllDay          bool   `json:"allDay,omitempty"`
+	Stale           bool   `json:"stale,omitempty"`
 }
 
 type EventMessage struct {

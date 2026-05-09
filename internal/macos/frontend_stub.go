@@ -16,18 +16,25 @@ type Command struct {
 }
 
 type Event struct {
-	UID           string
-	Summary       string
-	Section       string
-	TimeText      string
-	TimePrimary   string
-	TimeSecondary string
-	Metadata      string
-	Location      string
-	Source        string
-	MeetingURL    string
-	AllDay        bool
-	Stale         bool
+	UID             string
+	Summary         string
+	Description     string
+	Section         string
+	TimeText        string
+	TimePrimary     string
+	TimeSecondary   string
+	Metadata        string
+	Location        string
+	Organizer       string
+	Source          string
+	EventURL        string
+	MeetingURL      string
+	MeetingService  string
+	MeetingID       string
+	MeetingPasscode string
+	MeetingDialIn   string
+	AllDay          bool
+	Stale           bool
 }
 
 type Frontend struct{}

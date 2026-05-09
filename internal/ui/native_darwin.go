@@ -117,18 +117,25 @@ func (n *Native) sendEvents() {
 			continue
 		}
 		items = append(items, macos.Event{
-			UID:           event.UID,
-			Summary:       event.Summary,
-			Section:       nativeEventSection(event, now),
-			TimeText:      nativeEventTimeText(event, now),
-			TimePrimary:   nativeEventTimePrimary(event, now),
-			TimeSecondary: nativeEventTimeSecondary(event),
-			Metadata:      nativeEventMetadata(event),
-			Location:      event.Location,
-			Source:        event.Source,
-			MeetingURL:    nativeMeetingURL(event),
-			AllDay:        event.AllDay,
-			Stale:         event.Stale,
+			UID:             event.UID,
+			Summary:         event.Summary,
+			Description:     event.Description,
+			Section:         nativeEventSection(event, now),
+			TimeText:        nativeEventTimeText(event, now),
+			TimePrimary:     nativeEventTimePrimary(event, now),
+			TimeSecondary:   nativeEventTimeSecondary(event),
+			Metadata:        nativeEventMetadata(event),
+			Location:        event.Location,
+			Organizer:       event.Organizer,
+			Source:          event.Source,
+			EventURL:        event.URL,
+			MeetingURL:      nativeMeetingURL(event),
+			MeetingService:  event.Meeting.Service,
+			MeetingID:       event.Meeting.ID,
+			MeetingPasscode: event.Meeting.Passcode,
+			MeetingDialIn:   event.Meeting.DialIn,
+			AllDay:          event.AllDay,
+			Stale:           event.Stale,
 		})
 	}
 	_ = n.frontend.Send(macos.Command{Type: "set_events", Events: items})
