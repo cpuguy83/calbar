@@ -39,12 +39,12 @@ type Event struct {
 	Location        string `json:"location,omitempty"`
 	Organizer       string `json:"organizer,omitempty"`
 	Source          string `json:"source,omitempty"`
-	EventURL        string `json:"eventURL,omitempty"`
 	MeetingURL      string `json:"meetingURL,omitempty"`
 	MeetingService  string `json:"meetingService,omitempty"`
 	MeetingID       string `json:"meetingID,omitempty"`
 	MeetingPasscode string `json:"meetingPasscode,omitempty"`
 	MeetingDialIn   string `json:"meetingDialIn,omitempty"`
+	MeetingPhoneID  string `json:"meetingPhoneID,omitempty"`
 	AllDay          bool   `json:"allDay,omitempty"`
 	Stale           bool   `json:"stale,omitempty"`
 }

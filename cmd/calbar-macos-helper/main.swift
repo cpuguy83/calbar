@@ -25,12 +25,12 @@ struct CalendarEvent: Codable, Identifiable {
 	let location: String?
 	let organizer: String?
 	let source: String?
-	let eventURL: String?
 	let meetingURL: String?
 	let meetingService: String?
 	let meetingID: String?
 	let meetingPasscode: String?
 	let meetingDialIn: String?
+	let meetingPhoneID: String?
 	let allDay: Bool?
 	let stale: Bool?
 
@@ -56,6 +56,7 @@ final class CalendarModel: ObservableObject {
 	@Published var errors: [String] = []
 	@Published var searchText = ""
 	@Published var searchFocusRequest = 0
+	@Published var selectedEvent: CalendarEvent?
 
 	var onOpenURL: ((String) -> Void)?
 	var onSync: (() -> Void)?
@@ -94,6 +95,17 @@ final class CalendarModel: ObservableObject {
 
 	func updateEvents(_ events: [CalendarEvent]) {
 		self.events = events
+		if let selectedEvent {
+			self.selectedEvent = events.first { $0.id == selectedEvent.id }
+		}
+	}
+
+	func showDetails(_ event: CalendarEvent) {
+		selectedEvent = event
+	}
+
+	func hideDetails() {
+		selectedEvent = nil
 	}
 
 	func updateLoading(_ loading: Bool) {
@@ -117,7 +129,6 @@ private struct EventGroup: Identifiable {
 
 private struct CalendarPopoverView: View {
 	@ObservedObject var model: CalendarModel
-	@State private var expandedEventID: String?
 
 	private var groups: [EventGroup] {
 		var result: [EventGroup] = []
@@ -134,6 +145,33 @@ private struct CalendarPopoverView: View {
 
 	var body: some View {
 		VStack(spacing: 0) {
+			ZStack {
+				if let event = model.selectedEvent {
+					EventDetailView(
+						event: event,
+						onBack: { model.hideDetails() },
+						onOpenURL: { model.onOpenURL?($0) },
+						onHide: { uid in
+							model.onHide?(uid)
+							model.hideDetails()
+						}
+					)
+					.transition(.move(edge: .trailing).combined(with: .opacity))
+				} else {
+					listView
+						.transition(.move(edge: .leading).combined(with: .opacity))
+				}
+			}
+			.frame(maxWidth: .infinity, maxHeight: .infinity)
+			Divider()
+			footer
+		}
+		.animation(.easeInOut(duration: 0.18), value: model.selectedEvent?.id)
+		.frame(width: 420, height: 560)
+	}
+
+	private var listView: some View {
+		VStack(spacing: 0) {
 			header
 			Divider()
 			SearchField(text: $model.searchText, focusRequest: $model.searchFocusRequest)
@@ -142,10 +180,7 @@ private struct CalendarPopoverView: View {
 				.padding(.vertical, 10)
 			Divider()
 			content
-			Divider()
-			footer
 		}
-		.frame(width: 420, height: 560)
 	}
 
 	private var header: some View {
@@ -192,20 +227,15 @@ private struct CalendarPopoverView: View {
 			.frame(maxWidth: .infinity, maxHeight: .infinity)
 		} else {
 			ScrollView {
-				LazyVStack(alignment: .leading, spacing: 8) {
+				LazyVStack(alignment: .leading, spacing: 0) {
 					ForEach(groups) { group in
 						Section {
 							ForEach(group.events) { event in
 								EventRow(
 									event: event,
-									isExpanded: expandedEventID == event.id,
 									onOpenURL: { model.onOpenURL?($0) },
 									onHide: { model.onHide?($0) },
-									onToggleDetails: {
-										withAnimation(.easeInOut(duration: 0.16)) {
-											expandedEventID = expandedEventID == event.id ? nil : event.id
-										}
-									}
+									onShowDetails: { model.showDetails(event) }
 								)
 							}
 						} header: {
@@ -213,14 +243,13 @@ private struct CalendarPopoverView: View {
 								.font(.caption.weight(.semibold))
 								.foregroundStyle(.secondary)
 								.frame(maxWidth: .infinity, alignment: .leading)
-								.padding(.horizontal, 14)
-								.padding(.top, 14)
-								.padding(.bottom, 2)
+								.padding(.horizontal, 16)
+								.padding(.top, 12)
+								.padding(.bottom, 4)
 						}
 					}
 				}
-				.padding(.top, 4)
-				.padding(.bottom, 10)
+				.padding(.bottom, 8)
 			}
 		}
 	}
@@ -249,195 +278,82 @@ private struct CalendarPopoverView: View {
 
 private struct EventRow: View {
 	let event: CalendarEvent
-	let isExpanded: Bool
 	let onOpenURL: (String) -> Void
 	let onHide: (String) -> Void
-	let onToggleDetails: () -> Void
+	let onShowDetails: () -> Void
 
 	var body: some View {
-		VStack(alignment: .leading, spacing: 0) {
-			HStack(alignment: .top, spacing: 12) {
-				TimeColumn(event: event, accentColor: accentColor)
-					.frame(width: 74, alignment: .trailing)
-				VStack(alignment: .leading, spacing: 6) {
-					HStack(alignment: .firstTextBaseline, spacing: 6) {
-						Text(event.summary)
-							.font(.body.weight(.semibold))
-							.foregroundStyle(.primary)
-							.lineLimit(2)
-						if event.stale == true {
-							Image(systemName: "exclamationmark.triangle.fill")
-								.foregroundStyle(Color.red)
-								.help("Stale event")
-						}
-					}
-					Text(event.timeText)
-						.font(.callout)
-						.foregroundStyle(Color.primary.opacity(0.78))
-						.lineLimit(1)
-					if let location = event.location, !location.isEmpty {
-						Label(location, systemImage: "mappin.and.ellipse")
-							.font(.caption)
-							.foregroundStyle(.secondary)
-							.lineLimit(1)
-					}
-					HStack(spacing: 6) {
-						if let source = event.source, !source.isEmpty {
-							EventBadge(text: source, systemImage: "calendar", color: accentColor)
-						}
-						if event.meetingURL?.isEmpty == false {
-							EventBadge(text: "Meeting", systemImage: "video.fill", color: accentColor)
-						}
-					}
+		HStack(alignment: .top, spacing: 12) {
+			Button(action: onShowDetails) {
+				rowContent
+					.frame(maxWidth: .infinity, alignment: .leading)
+			}
+			.buttonStyle(.plain)
+			if let meetingURL = event.meetingURL, !meetingURL.isEmpty {
+				Button {
+					onOpenURL(meetingURL)
+				} label: {
+					Text("Join")
 				}
-				Spacer(minLength: 6)
-				VStack(alignment: .trailing, spacing: 6) {
-					if let meetingURL = event.meetingURL, !meetingURL.isEmpty {
-						Button {
-							onOpenURL(meetingURL)
-						} label: {
-							Label("Join", systemImage: "video")
-						}
-						.buttonStyle(.bordered)
-					}
-					Button {
-						onToggleDetails()
-					} label: {
-						Label(isExpanded ? "Less" : "Details", systemImage: isExpanded ? "chevron.up" : "info.circle")
-							.labelStyle(.iconOnly)
-					}
-					.buttonStyle(.borderless)
-					.foregroundStyle(.secondary)
-					.help(isExpanded ? "Hide details" : "Show details")
-				}
+				.buttonStyle(.bordered)
 				.controlSize(.small)
-			}
-			.padding(12)
-			if isExpanded {
-				Divider()
-					.padding(.leading, 98)
-					.padding(.trailing, 12)
-				details
-					.transition(.opacity.combined(with: .move(edge: .top)))
+			} else {
+				Image(systemName: "chevron.right")
+					.font(.caption.weight(.semibold))
+					.foregroundStyle(.tertiary)
+					.padding(.top, 3)
 			}
 		}
-		.background(cardFill)
-		.clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-		.overlay {
-			RoundedRectangle(cornerRadius: 14, style: .continuous)
-				.strokeBorder(cardStroke, lineWidth: event.stale == true ? 1.5 : 1)
+		.padding(.horizontal, 16)
+		.padding(.vertical, 10)
+		.background(Color.primary.opacity(0.0001))
+		.overlay(alignment: .bottom) {
+			Divider().padding(.leading, 90)
 		}
-		.overlay(alignment: .leading) {
-			Capsule()
-				.fill(accentColor)
-				.frame(width: 4)
-				.padding(.vertical, 11)
-				.padding(.leading, 8)
+		.contextMenu {
+			Button("Show Details") { onShowDetails() }
+			Button("Hide Event", role: .destructive) { onHide(event.uid) }
 		}
-		.shadow(color: Color.black.opacity(0.08), radius: 6, x: 0, y: 2)
-		.padding(.horizontal, 10)
-		.padding(.vertical, 2)
 		.accessibilityElement(children: .combine)
 		.accessibilityLabel(accessibilityLabel)
 	}
 
-	private var details: some View {
-		VStack(alignment: .leading, spacing: 8) {
-			DetailLine(systemImage: "clock", title: "When", value: event.timeText)
-			if let location = event.location, !location.isEmpty {
-				DetailLine(systemImage: "mappin.and.ellipse", title: "Where", value: location)
-			}
-			if let source = event.source, !source.isEmpty {
-				DetailLine(systemImage: "calendar", title: "Calendar", value: source)
-			}
-			if let organizer = event.organizer, !organizer.isEmpty {
-				DetailLine(systemImage: "person", title: "Organizer", value: organizer)
-			}
-			if let service = event.meetingService, !service.isEmpty {
-				DetailLine(systemImage: "video", title: "Meeting", value: service)
-			}
-			if let meetingID = event.meetingID, !meetingID.isEmpty {
-				DetailLine(systemImage: "number", title: "Meeting ID", value: meetingID)
-			}
-			if let passcode = event.meetingPasscode, !passcode.isEmpty {
-				DetailLine(systemImage: "key", title: "Passcode", value: passcode)
-			}
-			if let dialIn = event.meetingDialIn, !dialIn.isEmpty {
-				DetailLine(systemImage: "phone", title: "Dial-in", value: dialIn)
-			}
-			if let metadata = event.metadata, !metadata.isEmpty, metadata != event.source {
-				DetailLine(systemImage: "info.circle", title: "Info", value: metadata)
-			}
-			if let description = event.description?.trimmingCharacters(in: .whitespacesAndNewlines), !description.isEmpty {
-				Text(description)
+	private var rowContent: some View {
+		HStack(alignment: .top, spacing: 12) {
+			TimeColumn(event: event)
+				.frame(width: 62, alignment: .trailing)
+			VStack(alignment: .leading, spacing: 4) {
+				HStack(alignment: .firstTextBaseline, spacing: 6) {
+					Text(event.summary)
+						.font(.body.weight(.medium))
+						.foregroundStyle(event.stale == true ? Color.red : Color.primary)
+						.lineLimit(2)
+					if event.stale == true {
+						Image(systemName: "exclamationmark.triangle.fill")
+							.foregroundStyle(Color.red)
+							.help("Stale event")
+					}
+				}
+				Text(event.timeText)
 					.font(.caption)
-					.foregroundStyle(.primary)
-					.lineLimit(5)
-					.frame(maxWidth: .infinity, alignment: .leading)
-					.padding(.top, 2)
+					.foregroundStyle(.secondary)
+					.lineLimit(1)
+				if let location = event.location, !location.isEmpty {
+					Label(location, systemImage: "mappin.and.ellipse")
+						.font(.caption)
+						.foregroundStyle(.secondary)
+						.lineLimit(1)
+				}
+				if let source = event.source, !source.isEmpty {
+					Text(source)
+						.font(.caption2)
+						.foregroundStyle(.tertiary)
+						.lineLimit(1)
+				}
 			}
-			HStack(spacing: 8) {
-				if let meetingURL = event.meetingURL, !meetingURL.isEmpty {
-					Button {
-						onOpenURL(meetingURL)
-					} label: {
-						Label("Join Meeting", systemImage: "video.fill")
-					}
-					.buttonStyle(.borderedProminent)
-				}
-				if let eventURL = event.eventURL, !eventURL.isEmpty, eventURL != event.meetingURL {
-					Button {
-						onOpenURL(eventURL)
-					} label: {
-						Label("Open Event", systemImage: "arrow.up.right.square")
-					}
-					.buttonStyle(.bordered)
-				}
-				Button("Hide Event", role: .destructive) {
-					onHide(event.uid)
-				}
-				.buttonStyle(.borderless)
-			}
-			.controlSize(.small)
-			.padding(.top, 2)
+			Spacer(minLength: 6)
 		}
-		.padding(.leading, 98)
-		.padding(.trailing, 12)
-		.padding(.vertical, 10)
 	}
-
-	private var cardFill: Color {
-		if event.stale == true {
-			return Color.red.opacity(0.08)
-		}
-		return Color(nsColor: .textBackgroundColor).opacity(0.92)
-	}
-
-	private var cardStroke: Color {
-		if event.stale == true {
-			return Color.red.opacity(0.5)
-		}
-		return Color.primary.opacity(0.18)
-	}
-
-	private var accentColor: Color {
-		let key = event.source?.isEmpty == false ? event.source! : event.summary
-		var hash = 0
-		for scalar in key.unicodeScalars {
-			hash = (hash &* 31) &+ Int(scalar.value)
-		}
-		return Self.accentColors[abs(hash % Self.accentColors.count)]
-	}
-
-	private static let accentColors: [Color] = [
-		.blue,
-		.purple,
-		.teal,
-		.orange,
-		.green,
-		.pink,
-		.indigo,
-	]
 
 	private var accessibilityLabel: Text {
 		var parts = [event.summary, event.timeText]
@@ -448,54 +364,137 @@ private struct EventRow: View {
 	}
 }
 
-private struct EventBadge: View {
-	let text: String
-	let systemImage: String
-	let color: Color
-
-	var body: some View {
-		Label(text, systemImage: systemImage)
-			.font(.caption2.weight(.medium))
-			.foregroundStyle(color)
-			.lineLimit(1)
-			.padding(.horizontal, 7)
-			.padding(.vertical, 3)
-			.background(color.opacity(0.12), in: Capsule())
-	}
-}
-
 private struct DetailLine: View {
 	let systemImage: String
-	let title: String
 	let value: String
 
 	var body: some View {
-		HStack(alignment: .firstTextBaseline, spacing: 8) {
+		HStack(alignment: .firstTextBaseline, spacing: 10) {
 			Image(systemName: systemImage)
-				.frame(width: 14)
-				.foregroundStyle(.secondary)
-			Text(title)
-				.font(.caption.weight(.semibold))
-				.foregroundStyle(.secondary)
-				.frame(width: 66, alignment: .leading)
+				.frame(width: 18)
+				.foregroundStyle(Color.secondary)
 			Text(value)
-				.font(.caption)
+				.font(.callout)
 				.foregroundStyle(.primary)
-				.lineLimit(2)
+				.textSelection(.enabled)
+				.fixedSize(horizontal: false, vertical: true)
 		}
-		.fixedSize(horizontal: false, vertical: true)
+	}
+}
+
+private struct EventDetailView: View {
+	let event: CalendarEvent
+	let onBack: () -> Void
+	let onOpenURL: (String) -> Void
+	let onHide: (String) -> Void
+
+	var body: some View {
+		VStack(spacing: 0) {
+			detailHeader
+			Divider()
+			ScrollView {
+				VStack(alignment: .leading, spacing: 14) {
+					Text(event.summary)
+						.font(.title3.weight(.semibold))
+						.foregroundStyle(event.stale == true ? Color.red : Color.primary)
+						.fixedSize(horizontal: false, vertical: true)
+					DetailLine(systemImage: "calendar", value: event.timeText)
+					if let location = event.location, !location.isEmpty {
+						DetailLine(systemImage: "mappin.and.ellipse", value: location)
+					}
+					if let service = event.meetingService, !service.isEmpty, service != event.location {
+						DetailLine(systemImage: "desktopcomputer", value: service)
+					}
+					if let meetingID = event.meetingID, !meetingID.isEmpty {
+						DetailLine(systemImage: "number", value: "Meeting ID: \(meetingID)")
+					}
+					if let passcode = event.meetingPasscode, !passcode.isEmpty {
+						DetailLine(systemImage: "key", value: "Passcode: \(passcode)")
+					}
+					if let dialIn = event.meetingDialIn, !dialIn.isEmpty {
+						DetailLine(systemImage: "phone", value: "Dial-in: \(dialIn)")
+					}
+					if let phoneID = event.meetingPhoneID, !phoneID.isEmpty {
+						DetailLine(systemImage: "phone", value: "Phone conference ID: \(phoneID)")
+					}
+					if let organizer = event.organizer, !organizer.isEmpty {
+						DetailLine(systemImage: "person", value: organizer)
+					}
+					if let source = event.source, !source.isEmpty {
+						DetailLine(systemImage: "folder", value: source)
+					}
+					if let description = cleanDescription, !description.isEmpty {
+						VStack(alignment: .leading, spacing: 6) {
+							Text("Description")
+								.font(.caption.weight(.semibold))
+								.foregroundStyle(.secondary)
+							Text(description)
+								.font(.callout)
+								.textSelection(.enabled)
+								.fixedSize(horizontal: false, vertical: true)
+						}
+					}
+					actions
+				}
+				.padding(16)
+			}
+		}
+	}
+
+	private var detailHeader: some View {
+		HStack(spacing: 8) {
+			Button(action: onBack) {
+				Label("Back", systemImage: "chevron.left")
+					.labelStyle(.iconOnly)
+			}
+			.buttonStyle(.borderless)
+			.help("Back")
+			Text("Event Details")
+				.font(.headline)
+			Spacer()
+		}
+		.padding(.horizontal, 12)
+		.padding(.vertical, 10)
+	}
+
+	private var actions: some View {
+		HStack(spacing: 10) {
+			Spacer()
+			if let meetingURL = event.meetingURL, !meetingURL.isEmpty {
+				Button {
+					onOpenURL(meetingURL)
+				} label: {
+					Label("Join", systemImage: "video")
+				}
+				.buttonStyle(.borderedProminent)
+			}
+			Button("Hide", role: .destructive) {
+				onHide(event.uid)
+			}
+			.buttonStyle(.bordered)
+			Spacer()
+		}
+		.controlSize(.regular)
+		.padding(.top, 4)
+	}
+
+	private var cleanDescription: String? {
+		guard let description = event.description else { return nil }
+		return description
+			.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+			.replacingOccurrences(of: "&nbsp;", with: " ")
+			.trimmingCharacters(in: .whitespacesAndNewlines)
 	}
 }
 
 private struct TimeColumn: View {
 	let event: CalendarEvent
-	let accentColor: Color
 
 	var body: some View {
 		VStack(alignment: .trailing, spacing: 1) {
 			Text(event.timePrimaryText)
-				.font(.callout.monospacedDigit().weight(.semibold))
-				.foregroundStyle(accentColor)
+				.font(.callout.monospacedDigit().weight(.medium))
+				.foregroundStyle(event.stale == true ? Color.red : Color.secondary)
 				.lineLimit(1)
 			if !event.timeSecondaryText.isEmpty {
 				Text(event.timeSecondaryText)
@@ -599,7 +598,11 @@ final class HelperApp: NSObject, NSApplicationDelegate {
 		popover.contentViewController = hostingController
 		keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
 			guard event.keyCode == 53, self?.popover.isShown == true else { return event }
-			self?.popover.performClose(nil)
+			if self?.model.selectedEvent != nil {
+				self?.model.hideDetails()
+			} else {
+				self?.popover.performClose(nil)
+			}
 			return nil
 		}
 
@@ -673,11 +676,18 @@ final class HelperApp: NSObject, NSApplicationDelegate {
 		case "show":
 			showPopover()
 		case "hide":
+			model.hideDetails()
 			popover.performClose(nil)
 		case "toggle":
-			popover.isShown ? popover.performClose(nil) : showPopover()
+			if popover.isShown {
+				model.hideDetails()
+				popover.performClose(nil)
+			} else {
+				showPopover()
+			}
 		case "search":
 			showPopover()
+			model.hideDetails()
 			model.requestSearchFocus()
 		case "set_tray_state":
 			setTrayState(command.state ?? "normal")
@@ -698,6 +708,7 @@ final class HelperApp: NSObject, NSApplicationDelegate {
 
 	private func showPopover() {
 		guard let button = statusItem.button else { return }
+		model.hideDetails()
 		if popover.isShown { return }
 		popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
 		NSApp.activate()

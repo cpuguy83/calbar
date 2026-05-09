@@ -27,12 +27,12 @@ type Event struct {
 	Location        string
 	Organizer       string
 	Source          string
-	EventURL        string
 	MeetingURL      string
 	MeetingService  string
 	MeetingID       string
 	MeetingPasscode string
 	MeetingDialIn   string
+	MeetingPhoneID  string
 	AllDay          bool
 	Stale           bool
 }

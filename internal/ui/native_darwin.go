@@ -128,12 +128,12 @@ func (n *Native) sendEvents() {
 			Location:        event.Location,
 			Organizer:       event.Organizer,
 			Source:          event.Source,
-			EventURL:        event.URL,
 			MeetingURL:      nativeMeetingURL(event),
 			MeetingService:  event.Meeting.Service,
 			MeetingID:       event.Meeting.ID,
 			MeetingPasscode: event.Meeting.Passcode,
 			MeetingDialIn:   event.Meeting.DialIn,
+			MeetingPhoneID:  event.Meeting.PhoneConferenceID,
 			AllDay:          event.AllDay,
 			Stale:           event.Stale,
 		})
