@@ -2024,7 +2024,14 @@ func (p *Popup) createTimeIndicator(event calendar.Event, now time.Time) *gtk.Bo
 		startsIn := event.Start.Sub(now)
 		primary = localStart.Format("3:04")
 
-		if startsIn <= 15*time.Minute && startsIn > 0 {
+		if now.After(event.End) {
+			endedAgo := now.Sub(event.End)
+			if endedAgo < time.Hour {
+				secondary = fmt.Sprintf("%dm ago", int(endedAgo.Minutes()))
+			} else {
+				secondary = fmt.Sprintf("%.1fh ago", endedAgo.Hours())
+			}
+		} else if startsIn <= 15*time.Minute && startsIn > 0 {
 			box.AddCssClass("imminent")
 			primary = fmt.Sprintf("%dm", int(startsIn.Minutes()))
 			secondary = "away"
